@@ -34,7 +34,7 @@ func (h *NotesHandler) ListNotes(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -58,7 +58,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}

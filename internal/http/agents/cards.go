@@ -40,6 +40,12 @@ func listAgentCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"agents": cards})
 }
 
+var defaultCapabilities = []string{
+	"text-generation",
+	"function-calling",
+	"tool-use",
+}
+
 func getAgentCard(c *gin.Context) {
 	agentName := c.Param("agent")
 	ws, err := orchestration.LoadAgentWorkspace(agentName)
@@ -49,14 +55,10 @@ func getAgentCard(c *gin.Context) {
 	}
 
 	card := AgentCard{
-		Name:        ws.Name,
-		Description: ws.Description,
-		Version:     "1.0.0",
-		Capabilities: []string{
-			"text-generation",
-			"function-calling",
-			"tool-use",
-		},
+		Name:         ws.Name,
+		Description:  ws.Description,
+		Version:      "1.0.0",
+		Capabilities: defaultCapabilities,
 		Skills: []Skill{
 			{Name: ws.Name, Description: ws.Description},
 		},
@@ -71,13 +73,10 @@ func buildCard(agentName string) AgentCard {
 		return AgentCard{Name: agentName, Description: "unknown"}
 	}
 	return AgentCard{
-		Name:        ws.Name,
-		Description: ws.Description,
-		Version:     "1.0.0",
-		Capabilities: []string{
-			"text-generation",
-			"function-calling",
-		},
-		Endpoint: "/api/v1/agents/invoke/" + agentName,
+		Name:         ws.Name,
+		Description:  ws.Description,
+		Version:      "1.0.0",
+		Capabilities: defaultCapabilities,
+		Endpoint:     "/api/v1/agents/invoke/" + agentName,
 	}
 }

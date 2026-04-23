@@ -135,7 +135,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	req, ok := bindAndValidate[transport.UpdateProfileRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.UpdateProfileRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -168,7 +168,7 @@ func (h *Handler) CompleteOnboarding(c *gin.Context) {
 		return
 	}
 
-	req, ok := bindAndValidate[transport.CompleteOnboardingRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.CompleteOnboardingRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -201,7 +201,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	req, ok := bindAndValidate[transport.ChangePasswordRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.ChangePasswordRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -215,7 +215,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 
 // SignUp registers a new user in the system.
 func (h *Handler) SignUp(c *gin.Context) {
-	req, ok := bindAndValidate[transport.SignUpRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.SignUpRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -229,7 +229,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 
 // SignIn authenticates a user and returns an access and refresh token.
 func (h *Handler) SignIn(c *gin.Context) {
-	req, ok := bindAndValidate[transport.SignInRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.SignInRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -302,7 +302,7 @@ func (h *Handler) SignOut(c *gin.Context) {
 
 // ForgotPassword initiates the password reset workflow by dispatching an email.
 func (h *Handler) ForgotPassword(c *gin.Context) {
-	req, ok := bindAndValidate[transport.ForgotPasswordRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.ForgotPasswordRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -315,7 +315,7 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 
 // ResetPassword finalizes a password reset using the token provided via email.
 func (h *Handler) ResetPassword(c *gin.Context) {
-	req, ok := bindAndValidate[transport.ResetPasswordRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.ResetPasswordRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -329,7 +329,7 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 
 // VerifyEmail confirms a user's email address using a verification token.
 func (h *Handler) VerifyEmail(c *gin.Context) {
-	req, ok := bindAndValidate[transport.VerifyEmailRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.VerifyEmailRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -364,13 +364,12 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 		return
 	}
 
-	userID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	userID, ok := httpkit.ParseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	req, ok := bindAndValidate[transport.RoleUpdateRequest](c, h.val)
+	req, ok := httpkit.BindJSON[transport.RoleUpdateRequest](c, h.val)
 	if !ok {
 		return
 	}
@@ -385,21 +384,6 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 // ---------------------------------------------------------------------------
 // Internal Helpers
 // ---------------------------------------------------------------------------
-
-// bindAndValidate is a generic helper to decode and validate JSON requests.
-// Kept as a package-level function because Go does not support generic methods on structs.
-func bindAndValidate[T any](c *gin.Context, val *validator.Validator) (T, bool) {
-	var req T
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return req, false
-	}
-	if err := val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return req, false
-	}
-	return req, true
-}
 
 // extractRefreshToken encapsulates the logic of pulling the refresh token
 // from either the JSON body or the cookie fallback.

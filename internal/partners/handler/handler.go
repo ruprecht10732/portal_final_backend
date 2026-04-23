@@ -82,7 +82,7 @@ func (h *Handler) GetOfferTerms(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -100,7 +100,7 @@ func (h *Handler) UpdateOfferTerms(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -128,7 +128,7 @@ func (h *Handler) ListOfferTermsHistory(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -156,7 +156,7 @@ func (h *Handler) List(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -184,7 +184,7 @@ func (h *Handler) Create(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -208,7 +208,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -242,7 +242,7 @@ func (h *Handler) Update(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -266,7 +266,7 @@ func (h *Handler) Delete(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -299,7 +299,7 @@ func (h *Handler) PresignLogo(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -333,7 +333,7 @@ func (h *Handler) SetLogo(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -357,7 +357,7 @@ func (h *Handler) GetLogoDownload(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -381,7 +381,7 @@ func (h *Handler) DeleteLogo(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -405,7 +405,7 @@ func (h *Handler) ListLeads(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -439,7 +439,7 @@ func (h *Handler) LinkLead(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -468,7 +468,7 @@ func (h *Handler) UnlinkLead(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -501,7 +501,7 @@ func (h *Handler) CreateInvite(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -525,7 +525,7 @@ func (h *Handler) ListInvites(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -549,7 +549,7 @@ func (h *Handler) RevokeInvite(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -577,7 +577,7 @@ func (h *Handler) CreateOfferFromQuote(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -601,7 +601,7 @@ func (h *Handler) PreviewOffer(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -625,7 +625,7 @@ func (h *Handler) GetOfferDetail(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -649,7 +649,7 @@ func (h *Handler) GetOfferPDF(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -674,7 +674,7 @@ func (h *Handler) ResendOffer(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -701,7 +701,7 @@ func (h *Handler) RegenerateOfferPDF(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -732,7 +732,7 @@ func (h *Handler) PreviewOfferPhoto(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -757,7 +757,7 @@ func (h *Handler) ListPartnerOffers(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -781,7 +781,7 @@ func (h *Handler) ListServiceOffers(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -809,7 +809,7 @@ func (h *Handler) ListOffers(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -833,7 +833,7 @@ func (h *Handler) DeleteOffer(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -845,11 +845,3 @@ func (h *Handler) DeleteOffer(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "offer deleted"})
 }
 
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}

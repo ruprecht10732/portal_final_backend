@@ -135,7 +135,7 @@ func (h *Handler) AnalyzeSubsidyPreview(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -162,7 +162,7 @@ func (h *Handler) CancelGenerateJob(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -207,7 +207,7 @@ func (h *Handler) SubmitGenerateJobFeedback(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -229,7 +229,7 @@ func (h *Handler) MarkGenerateJobViewed(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -261,7 +261,7 @@ func (h *Handler) SubmitHumanFeedback(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -276,7 +276,7 @@ func (h *Handler) SubmitHumanFeedback(c *gin.Context) {
 
 // ListGenerateJobs handles GET /api/v1/quotes/generate-jobs
 func (h *Handler) ListGenerateJobs(c *gin.Context) {
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -323,7 +323,7 @@ func (h *Handler) DeleteGenerateJob(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -342,7 +342,7 @@ func (h *Handler) DeleteGenerateJob(c *gin.Context) {
 
 // ClearCompletedGenerateJobs handles DELETE /api/v1/quotes/generate-jobs/completed
 func (h *Handler) ClearCompletedGenerateJobs(c *gin.Context) {
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) RegisterPublicRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) GetMoneybirdAuthorizeURL(c *gin.Context) {
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -397,7 +397,7 @@ func (h *Handler) HandleMoneybirdOAuthCallback(c *gin.Context) {
 func (h *Handler) DisconnectProvider(c *gin.Context) {
 	provider := c.Param("provider")
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -412,7 +412,7 @@ func (h *Handler) DisconnectProvider(c *gin.Context) {
 func (h *Handler) GetProviderIntegrationStatus(c *gin.Context) {
 	provider := c.Param("provider")
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -433,7 +433,7 @@ func (h *Handler) GetQuoteExportStatus(c *gin.Context) {
 	}
 	provider := c.Param("provider")
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -454,7 +454,7 @@ func (h *Handler) ExportToProvider(c *gin.Context) {
 	}
 	provider := c.Param("provider")
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -480,7 +480,7 @@ func (h *Handler) BulkExportToProvider(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -501,7 +501,7 @@ func (h *Handler) ListPendingApprovals(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -522,7 +522,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -547,7 +547,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -574,7 +574,7 @@ func (h *Handler) Generate(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -614,7 +614,7 @@ func (h *Handler) GetGenerateJob(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -686,7 +686,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -717,7 +717,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -743,7 +743,7 @@ func (h *Handler) Duplicate(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -765,7 +765,7 @@ func (h *Handler) CreateVersion(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -787,7 +787,7 @@ func (h *Handler) GetVersionHistory(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -818,7 +818,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -851,7 +851,7 @@ func (h *Handler) SetLeadService(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -873,7 +873,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -904,7 +904,7 @@ func (h *Handler) Transfer(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -948,7 +948,7 @@ func (h *Handler) Send(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -971,7 +971,7 @@ func (h *Handler) GetPreviewLink(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1009,7 +1009,7 @@ func (h *Handler) AgentAnnotate(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1037,7 +1037,7 @@ func (h *Handler) SuggestAnnotationReplyDraft(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1059,7 +1059,7 @@ func (h *Handler) ListActivities(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1086,7 +1086,7 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1133,7 +1133,7 @@ func (h *Handler) PresignAttachmentUpload(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1202,7 +1202,7 @@ func (h *Handler) GetAttachmentDownloadURL(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1250,7 +1250,7 @@ func (h *Handler) StartAnalyzeSubsidy(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1284,7 +1284,7 @@ func (h *Handler) GetAnalyzeSubsidyJob(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1297,16 +1297,3 @@ func (h *Handler) GetAnalyzeSubsidyJob(c *gin.Context) {
 	httpkit.JSON(c, http.StatusOK, job)
 }
 
-// mustGetTenantID extracts the tenant ID from identity.
-func mustGetTenantID(c *gin.Context) (uuid.UUID, bool) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return uuid.UUID{}, false
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}

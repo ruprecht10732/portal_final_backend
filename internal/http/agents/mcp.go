@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,7 +30,7 @@ func NewMCPHandler(pool *pgxpool.Pool) *MCPHandler {
 	tb := toolbox.NewLoader(pool, server)
 	handler, err := tb.LoadAndRegister("agents/calculator/tools.yaml")
 	if err != nil {
-		fmt.Printf("Failed to load toolbox: %v\n", err)
+		slog.Error("failed to load MCP toolbox", "error", err)
 	} else {
 		tbHandler = handler
 	}

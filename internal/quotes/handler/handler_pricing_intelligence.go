@@ -13,7 +13,7 @@ import (
 const defaultPricingIntelligenceServiceType = ""
 
 func (h *Handler) GetPricingIntelligenceSummary(c *gin.Context) {
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -51,7 +51,7 @@ func (h *Handler) GetPricingIntelligenceSummary(c *gin.Context) {
 }
 
 func (h *Handler) GetPricingIntelligenceRecords(c *gin.Context) {
-	tenantID, ok := mustGetTenantID(c)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}

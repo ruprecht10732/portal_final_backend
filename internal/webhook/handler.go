@@ -19,8 +19,6 @@ import (
 
 const (
 	errNoOrgContext    = "no organization context"
-	errInvalidRequest  = "invalid request body"
-	errValidation      = "validation error"
 	errInvalidConfigID = "invalid config ID"
 	googleTimeFormat   = "2006-01-02T15:04:05Z"
 )
@@ -89,8 +87,8 @@ func (h *Handler) HandleGetGTMConfig(c *gin.Context) {
 // HandleUpdateGTMConfig sets the GTM container ID for the tenant.
 // PUT /api/v1/admin/webhook/gtm-config
 func (h *Handler) HandleUpdateGTMConfig(c *gin.Context) {
-	var req UpdateGTMConfigRequest
-	if !h.bindAndValidate(c, &req) {
+	req, ok := httpkit.BindJSON[UpdateGTMConfigRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -233,8 +231,8 @@ type RotateAPIKeyRequest struct {
 // HandleCreateAPIKey creates a new webhook API key.
 // POST /api/v1/admin/webhook/keys
 func (h *Handler) HandleCreateAPIKey(c *gin.Context) {
-	var req CreateAPIKeyRequest
-	if !h.bindAndValidate(c, &req) {
+	req, ok := httpkit.BindJSON[CreateAPIKeyRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -326,8 +324,8 @@ func (h *Handler) HandleRotateAPIKey(c *gin.Context) {
 		return
 	}
 
-	var req RotateAPIKeyRequest
-	if !h.bindAndValidate(c, &req) {
+	req, ok := httpkit.BindJSON[RotateAPIKeyRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -427,8 +425,8 @@ func (h *Handler) HandleGoogleLeadWebhook(c *gin.Context) {
 // HandleCreateGoogleWebhookConfig creates a new Google webhook config.
 // POST /api/v1/admin/webhook/google-lead-config
 func (h *Handler) HandleCreateGoogleWebhookConfig(c *gin.Context) {
-	var req CreateGoogleWebhookConfigRequest
-	if !h.bindAndValidate(c, &req) {
+	req, ok := httpkit.BindJSON[CreateGoogleWebhookConfigRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -497,13 +495,13 @@ func (h *Handler) HandleUpdateGoogleCampaignMapping(c *gin.Context) {
 		return
 	}
 
-	configID, ok := h.parseConfigID(c)
+	configID, ok := httpkit.ParseUUIDParam(c, "configId")
 	if !ok {
 		return
 	}
 
-	var req UpdateCampaignMappingRequest
-	if !h.bindAndValidate(c, &req) {
+	req, ok := httpkit.BindJSON[UpdateCampaignMappingRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -529,7 +527,7 @@ func (h *Handler) HandleDeleteGoogleCampaignMapping(c *gin.Context) {
 		return
 	}
 
-	configID, ok := h.parseConfigID(c)
+	configID, ok := httpkit.ParseUUIDParam(c, "configId")
 	if !ok {
 		return
 	}
@@ -556,7 +554,7 @@ func (h *Handler) HandleDeleteGoogleWebhookConfig(c *gin.Context) {
 		return
 	}
 
-	configID, ok := h.parseConfigID(c)
+	configID, ok := httpkit.ParseUUIDParam(c, "configId")
 	if !ok {
 		return
 	}
@@ -592,27 +590,6 @@ func (h *Handler) getTenantID(c *gin.Context) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return *tenantID, true
-}
-
-func (h *Handler) parseConfigID(c *gin.Context) (uuid.UUID, bool) {
-	configID, err := uuid.Parse(c.Param("configId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, errInvalidConfigID, nil)
-		return uuid.UUID{}, false
-	}
-	return configID, true
-}
-
-func (h *Handler) bindAndValidate(c *gin.Context, req interface{}) bool {
-	if err := c.ShouldBindJSON(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, errInvalidRequest, err.Error())
-		return false
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, errValidation, err.Error())
-		return false
-	}
-	return true
 }
 
 func (h *Handler) getWebhookOrgID(c *gin.Context) (uuid.UUID, bool) {

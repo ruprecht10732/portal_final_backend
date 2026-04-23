@@ -39,7 +39,7 @@ func (h *Handler) GetFlow(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -60,7 +60,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -128,7 +128,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -155,7 +155,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -181,7 +181,7 @@ func (h *Handler) Duplicate(c *gin.Context) {
 		return
 	}
 
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -194,11 +194,3 @@ func (h *Handler) Duplicate(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}

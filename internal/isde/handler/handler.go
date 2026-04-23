@@ -9,7 +9,6 @@ import (
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 const (
@@ -49,7 +48,7 @@ func (h *Handler) Calculate(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -61,11 +60,3 @@ func (h *Handler) Calculate(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}

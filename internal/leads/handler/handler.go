@@ -58,21 +58,10 @@ type HandlerDeps struct {
 const (
 	msgInvalidRequest   = "invalid request"
 	msgValidationFailed = "validation failed"
-	msgTenantRequired   = "tenant context required"
 	msgInvalidServiceID = "invalid serviceId"
 	dateLayout          = "2006-01-02"
 )
 
-// mustGetTenantID extracts and dereferences the tenant ID from identity.
-// Returns the tenant ID and true if valid, or handles the error response and returns false.
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, msgTenantRequired, nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}
 
 // New creates a new RAC_leads handler with focused services.
 func New(deps HandlerDeps) *Handler {
@@ -162,7 +151,7 @@ func (h *Handler) Transfer(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -198,7 +187,7 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -216,7 +205,7 @@ func (h *Handler) GetInboxCommunications(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -239,7 +228,7 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -269,7 +258,7 @@ func (h *Handler) ListStaleLeads(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -332,7 +321,7 @@ func (h *Handler) GetActionItems(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -366,7 +355,7 @@ func (h *Handler) GetActivityFeed(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -401,7 +390,7 @@ func (h *Handler) Create(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -430,7 +419,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -454,7 +443,7 @@ func (h *Handler) GetDetailContext(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -478,7 +467,7 @@ func (h *Handler) GetTimeline(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -512,7 +501,7 @@ func (h *Handler) SendTimelineWhatsApp(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -559,7 +548,7 @@ func (h *Handler) Update(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -600,7 +589,7 @@ func (h *Handler) Assign(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -619,7 +608,7 @@ func (h *Handler) Delete(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -643,7 +632,7 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -672,7 +661,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -713,7 +702,7 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -730,7 +719,7 @@ func (h *Handler) CheckDuplicate(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -754,7 +743,7 @@ func (h *Handler) CheckReturningCustomer(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -780,7 +769,7 @@ func (h *Handler) List(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -804,7 +793,7 @@ func (h *Handler) AddService(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -855,7 +844,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -895,7 +884,7 @@ func (h *Handler) UpdateServiceType(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -935,7 +924,7 @@ func (h *Handler) CompleteService(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -976,7 +965,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1081,7 +1070,7 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1133,7 +1122,7 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1176,7 +1165,7 @@ func (h *Handler) LogCall(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1311,7 +1300,7 @@ func (h *Handler) ToggleReaction(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1346,7 +1335,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1377,7 +1366,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1422,7 +1411,7 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1446,7 +1435,7 @@ func (h *Handler) ListOrgMembers(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1473,7 +1462,7 @@ func (h *Handler) AgentHealth(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1515,7 +1504,7 @@ func (h *Handler) ListAgentApprovals(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1548,7 +1537,7 @@ func (h *Handler) CountPendingAgentApprovals(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1568,7 +1557,7 @@ func (h *Handler) GetAgentApproval(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1599,7 +1588,7 @@ func (h *Handler) ApproveAgentApproval(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -1636,7 +1625,7 @@ func (h *Handler) RejectAgentApproval(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}

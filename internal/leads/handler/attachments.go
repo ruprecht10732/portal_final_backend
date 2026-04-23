@@ -46,7 +46,7 @@ func (h *AttachmentsHandler) GetPresignedUploadURL(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -108,7 +108,7 @@ func (h *AttachmentsHandler) CreateAttachment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -169,7 +169,7 @@ func (h *AttachmentsHandler) ListAttachments(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -200,7 +200,7 @@ func (h *AttachmentsHandler) GetAttachment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -225,7 +225,7 @@ func (h *AttachmentsHandler) GetDownloadURL(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}
@@ -259,7 +259,7 @@ func (h *AttachmentsHandler) DeleteAttachment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := httpkit.RequireTenant(c)
 	if !ok {
 		return
 	}

@@ -34,8 +34,8 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 // ListVatRates retrieves VAT rates.
 // GET /api/v1/catalog/vat-rates
 func (h *Handler) ListVatRates(c *gin.Context) {
-	var req transport.ListVatRatesRequest
-	if !h.bindAndValidateQuery(c, &req) {
+	req, ok := httpkit.BindQuery[transport.ListVatRatesRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -72,8 +72,8 @@ func (h *Handler) GetVatRateByID(c *gin.Context) {
 // CreateVatRate creates a new VAT rate.
 // POST /api/v1/admin/catalog/vat-rates
 func (h *Handler) CreateVatRate(c *gin.Context) {
-	var req transport.CreateVatRateRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.CreateVatRateRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -95,8 +95,8 @@ func (h *Handler) UpdateVatRate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.UpdateVatRateRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.UpdateVatRateRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -132,8 +132,8 @@ func (h *Handler) DeleteVatRate(c *gin.Context) {
 // ListProducts retrieves catalog products.
 // GET /api/v1/catalog/products
 func (h *Handler) ListProducts(c *gin.Context) {
-	var req transport.ListProductsRequest
-	if !h.bindAndValidateQuery(c, &req) {
+	req, ok := httpkit.BindQuery[transport.ListProductsRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -180,8 +180,8 @@ func (h *Handler) GetProductByID(c *gin.Context) {
 // CreateProduct creates a product.
 // POST /api/v1/admin/catalog/products
 func (h *Handler) CreateProduct(c *gin.Context) {
-	var req transport.CreateProductRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.CreateProductRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -218,8 +218,8 @@ func (h *Handler) UpdateProduct(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.UpdateProductRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.UpdateProductRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -278,8 +278,8 @@ func (h *Handler) AddProductMaterials(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.ProductMaterialsRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.ProductMaterialsRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -330,8 +330,8 @@ func (h *Handler) RemoveProductMaterials(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.ProductMaterialsRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.ProductMaterialsRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -352,8 +352,8 @@ func (h *Handler) GetCatalogAssetPresign(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.PresignCatalogAssetRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.PresignCatalogAssetRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -375,8 +375,8 @@ func (h *Handler) CreateCatalogAsset(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.CreateCatalogAssetRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.CreateCatalogAssetRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -398,8 +398,8 @@ func (h *Handler) CreateCatalogURLAsset(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req transport.CreateCatalogURLAssetRequest
-	if !h.bindAndValidateJSON(c, &req) {
+	req, ok := httpkit.BindJSON[transport.CreateCatalogURLAssetRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -485,8 +485,8 @@ func (h *Handler) DeleteCatalogAsset(c *gin.Context) {
 
 // SearchProductsForAutocomplete handles GET /api/v1/catalog/products/search
 func (h *Handler) SearchProductsForAutocomplete(c *gin.Context) {
-	var req transport.AutocompleteSearchRequest
-	if !h.bindAndValidateQuery(c, &req) {
+	req, ok := httpkit.BindQuery[transport.AutocompleteSearchRequest](c, h.val)
+	if !ok {
 		return
 	}
 	tenantID, ok := h.getTenant(c)
@@ -533,28 +533,3 @@ func (h *Handler) parseUUIDParam(c *gin.Context, paramName string) (uuid.UUID, b
 	return id, true
 }
 
-// bindAndValidateJSON handles JSON payload binding and struct validation.
-func (h *Handler) bindAndValidateJSON(c *gin.Context, req any) bool {
-	if err := c.ShouldBindJSON(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return false
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return false
-	}
-	return true
-}
-
-// bindAndValidateQuery handles Query payload binding and struct validation.
-func (h *Handler) bindAndValidateQuery(c *gin.Context, req any) bool {
-	if err := c.ShouldBindQuery(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return false
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return false
-	}
-	return true
-}
