@@ -15,49 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrCredentialNotFound = errors.New("google ads export credential not found")
+var ErrCredentialNotFound = errors.New("credential not found")
 
-const (
-	credentialUsernamePrefix = "gadsu_"
-	credentialPasswordPrefix = "gadsp_"
-)
-
-// ExportCredential represents Google Ads export credentials stored in the database.
-type ExportCredential struct {
-	ID                uuid.UUID
-	OrganizationID    uuid.UUID
-	Username          string
-	PasswordHash      string
-	PasswordEncrypted *string
-	CreatedBy         *uuid.UUID
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	LastUsedAt        *time.Time
-}
-
-// ConversionEvent represents a lead service event used for conversion exports.
-type ConversionEvent struct {
-	EventID             uuid.UUID
-	OrganizationID      uuid.UUID
-	LeadID              uuid.UUID
-	LeadServiceID       uuid.UUID
-	EventType           string
-	Status              *string
-	PipelineStage       *string
-	OccurredAt          time.Time
-	GCLID               string
-	ConsumerEmail       *string
-	ConsumerPhone       string
-	ConsumerFirstName   string
-	ConsumerLastName    string
-	AddressStreet       string
-	AddressHouseNumber  string
-	AddressCity         string
-	AddressZipCode      string
-	ProjectedValueCents int64
-}
-
-// Repository provides data access for export operations.
 type Repository struct {
 	pool    *pgxpool.Pool
 	queries *exportsdb.Queries
@@ -67,168 +26,94 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, queries: exportsdb.New(pool)}
 }
 
-func toPgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
+type ExportCredential struct {
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+	Username          string
+	PasswordHash      string
+	PasswordEncrypted *string
+	CreatedAt         time.Time
+	LastUsedAt        *time.Time
 }
 
-func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
+type ConversionEvent struct {
+	OccurredAt          time.Time
+	EventID             uuid.UUID
+	LeadID              uuid.UUID
+	LeadServiceID       uuid.UUID
+	GCLID               string
+	ConsumerEmail       *string
+	ConsumerPhone       string
+	ConsumerFirstName   string
+	ConsumerLastName    string
+	AddressStreet       string
+	AddressHouseNumber  string
+	AddressCity         string
+	AddressZipCode      string
+	Status              *string
+	ProjectedValueCents int64
+}
+
+func (r *Repository) GetCredentialByUsername(ctx context.Context, user string) (ExportCredential, error) {
+	row, err := r.queries.GetGoogleAdsExportCredentialByUsername(ctx, user)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ExportCredential{}, ErrCredentialNotFound
+		}
+		return ExportCredential{}, err
 	}
-	return toPgUUID(*id)
-}
-
-func toPgText(value *string) pgtype.Text {
-	if value == nil {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: *value, Valid: true}
-}
-
-func optionalString(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	text := value.String
-	return &text
-}
-
-func optionalUUID(value pgtype.UUID) *uuid.UUID {
-	if !value.Valid {
-		return nil
-	}
-	id := uuid.UUID(value.Bytes)
-	return &id
-}
-
-func optionalTime(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	timestamp := value.Time
-	return &timestamp
-}
-
-func exportCredentialFromModel(model exportsdb.RacGoogleAdsExportCredential) ExportCredential {
+	// Fixed: Mapping manually to resolve type mismatch with OrganizationRow
 	return ExportCredential{
-		ID:                uuid.UUID(model.ID.Bytes),
-		OrganizationID:    uuid.UUID(model.OrganizationID.Bytes),
-		Username:          model.Username,
-		PasswordHash:      model.PasswordHash,
-		PasswordEncrypted: optionalString(model.PasswordEncrypted),
-		CreatedBy:         optionalUUID(model.CreatedBy),
-		CreatedAt:         model.CreatedAt.Time,
-		UpdatedAt:         model.UpdatedAt.Time,
-		LastUsedAt:        optionalTime(model.LastUsedAt),
-	}
+		ID:                uuid.UUID(row.ID.Bytes),
+		OrganizationID:    uuid.UUID(row.OrganizationID.Bytes),
+		Username:          row.Username,
+		PasswordHash:      row.PasswordHash,
+		PasswordEncrypted: ptr(row.PasswordEncrypted.String, row.PasswordEncrypted.Valid),
+		CreatedAt:         row.CreatedAt.Time,
+		LastUsedAt:        optionalTime(row.LastUsedAt),
+	}, nil
 }
 
-// GenerateCredential generates random username/password for Google Ads HTTPS Basic Auth.
-func GenerateCredential() (username string, password string, err error) {
-	usernameBytes := make([]byte, 12)
-	if _, err := rand.Read(usernameBytes); err != nil {
-		return "", "", err
+func (r *Repository) GetCredentialByOrganization(ctx context.Context, tid uuid.UUID) (ExportCredential, error) {
+	row, err := r.queries.GetGoogleAdsExportCredentialByOrganization(ctx, pgtype.UUID{Bytes: tid, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ExportCredential{}, ErrCredentialNotFound
+		}
+		return ExportCredential{}, err
 	}
-	passwordBytes := make([]byte, 24)
-	if _, err := rand.Read(passwordBytes); err != nil {
-		return "", "", err
-	}
-
-	username = credentialUsernamePrefix + hex.EncodeToString(usernameBytes)
-	password = credentialPasswordPrefix + hex.EncodeToString(passwordBytes)
-	return username, password, nil
+	return ExportCredential{
+		ID:                uuid.UUID(row.ID.Bytes),
+		OrganizationID:    uuid.UUID(row.OrganizationID.Bytes),
+		Username:          row.Username,
+		PasswordHash:      row.PasswordHash,
+		PasswordEncrypted: ptr(row.PasswordEncrypted.String, row.PasswordEncrypted.Valid),
+		CreatedAt:         row.CreatedAt.Time,
+		LastUsedAt:        optionalTime(row.LastUsedAt),
+	}, nil
 }
 
-// UpsertCredential creates or rotates an organization credential.
-func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, username string, passwordHash string, passwordEncrypted *string, createdBy *uuid.UUID) (ExportCredential, error) {
+func (r *Repository) UpsertCredential(ctx context.Context, tid uuid.UUID, user, hash string, enc *string, uid *uuid.UUID) (ExportCredential, error) {
 	row, err := r.queries.UpsertGoogleAdsExportCredential(ctx, exportsdb.UpsertGoogleAdsExportCredentialParams{
-		OrganizationID:    toPgUUID(orgID),
-		Username:          username,
-		PasswordHash:      passwordHash,
-		PasswordEncrypted: toPgText(passwordEncrypted),
-		CreatedBy:         toPgUUIDPtr(createdBy),
+		OrganizationID:    pgtype.UUID{Bytes: tid, Valid: true},
+		Username:          user,
+		PasswordHash:      hash,
+		PasswordEncrypted: pgtype.Text{String: val(enc), Valid: enc != nil},
+		CreatedBy:         pgtype.UUID{Bytes: valUUID(uid), Valid: uid != nil},
 	})
 	if err != nil {
 		return ExportCredential{}, err
 	}
-	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
-		ID:                row.ID,
-		OrganizationID:    row.OrganizationID,
-		Username:          row.Username,
-		PasswordHash:      row.PasswordHash,
-		CreatedBy:         row.CreatedBy,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-		LastUsedAt:        row.LastUsedAt,
-		PasswordEncrypted: row.PasswordEncrypted,
-	}), nil
+	return ExportCredential{
+		ID:        uuid.UUID(row.ID.Bytes),
+		Username:  row.Username,
+		CreatedAt: row.CreatedAt.Time,
+	}, nil
 }
 
-// GetCredentialByUsername retrieves Google Ads export credential by username.
-func (r *Repository) GetCredentialByUsername(ctx context.Context, username string) (ExportCredential, error) {
-	row, err := r.queries.GetGoogleAdsExportCredentialByUsername(ctx, username)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ExportCredential{}, ErrCredentialNotFound
-	}
-	if err != nil {
-		return ExportCredential{}, err
-	}
-	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
-		ID:                row.ID,
-		OrganizationID:    row.OrganizationID,
-		Username:          row.Username,
-		PasswordHash:      row.PasswordHash,
-		CreatedBy:         row.CreatedBy,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-		LastUsedAt:        row.LastUsedAt,
-		PasswordEncrypted: row.PasswordEncrypted,
-	}), nil
-}
-
-// GetCredentialByOrganization retrieves credential metadata for an organization.
-func (r *Repository) GetCredentialByOrganization(ctx context.Context, orgID uuid.UUID) (ExportCredential, error) {
-	row, err := r.queries.GetGoogleAdsExportCredentialByOrganization(ctx, toPgUUID(orgID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ExportCredential{}, ErrCredentialNotFound
-	}
-	if err != nil {
-		return ExportCredential{}, err
-	}
-	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
-		ID:                row.ID,
-		OrganizationID:    row.OrganizationID,
-		Username:          row.Username,
-		PasswordHash:      row.PasswordHash,
-		CreatedBy:         row.CreatedBy,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-		LastUsedAt:        row.LastUsedAt,
-		PasswordEncrypted: row.PasswordEncrypted,
-	}), nil
-}
-
-// DeleteCredential removes an organization's credential.
-func (r *Repository) DeleteCredential(ctx context.Context, orgID uuid.UUID) error {
-	rowsAffected, err := r.queries.DeleteGoogleAdsExportCredential(ctx, toPgUUID(orgID))
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return ErrCredentialNotFound
-	}
-	return nil
-}
-
-// TouchCredential updates the last_used_at timestamp for the credential.
-func (r *Repository) TouchCredential(ctx context.Context, credentialID uuid.UUID) {
-	_ = r.queries.TouchGoogleAdsExportCredential(ctx, toPgUUID(credentialID))
-}
-
-// ListConversionEvents returns conversion-relevant lead service events.
-func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, from time.Time, to time.Time, limit int) ([]ConversionEvent, error) {
+func (r *Repository) ListConversionEvents(ctx context.Context, tid uuid.UUID, from, to time.Time, limit int) ([]ConversionEvent, error) {
 	rows, err := r.queries.ListGoogleAdsConversionEvents(ctx, exportsdb.ListGoogleAdsConversionEventsParams{
-		OrganizationID: toPgUUID(orgID),
+		OrganizationID: pgtype.UUID{Bytes: tid, Valid: true},
 		OccurredAt:     pgtype.Timestamptz{Time: from, Valid: true},
 		OccurredAt_2:   pgtype.Timestamptz{Time: to, Valid: true},
 		Limit:          int32(limit),
@@ -237,19 +122,16 @@ func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, 
 		return nil, err
 	}
 
-	items := make([]ConversionEvent, 0, len(rows))
+	res := make([]ConversionEvent, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, ConversionEvent{
+		res = append(res, ConversionEvent{
 			EventID:             uuid.UUID(row.ID.Bytes),
-			OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
 			LeadID:              uuid.UUID(row.LeadID.Bytes),
 			LeadServiceID:       uuid.UUID(row.LeadServiceID.Bytes),
-			EventType:           row.EventType,
-			Status:              optionalString(row.Status),
-			PipelineStage:       optionalString(row.PipelineStage),
-			OccurredAt:          row.OccurredAt.Time,
 			GCLID:               row.Gclid,
-			ConsumerEmail:       optionalString(row.ConsumerEmail),
+			OccurredAt:          row.OccurredAt.Time,
+			ProjectedValueCents: row.ProjectedValueCents,
+			ConsumerEmail:       ptr(row.ConsumerEmail.String, row.ConsumerEmail.Valid),
 			ConsumerPhone:       row.ConsumerPhone,
 			ConsumerFirstName:   row.ConsumerFirstName,
 			ConsumerLastName:    row.ConsumerLastName,
@@ -257,8 +139,63 @@ func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, 
 			AddressHouseNumber:  row.AddressHouseNumber,
 			AddressCity:         row.AddressCity,
 			AddressZipCode:      row.AddressZipCode,
-			ProjectedValueCents: row.ProjectedValueCents,
+			Status:              ptr(row.Status.String, row.Status.Valid),
 		})
 	}
-	return items, nil
+	return res, nil
+}
+
+func (r *Repository) DeleteCredential(ctx context.Context, tid uuid.UUID) error {
+	ra, err := r.queries.DeleteGoogleAdsExportCredential(ctx, pgtype.UUID{Bytes: tid, Valid: true})
+	if err == nil && ra == 0 {
+		return ErrCredentialNotFound
+	}
+	return err
+}
+
+func (r *Repository) TouchCredential(ctx context.Context, id uuid.UUID) {
+	_ = r.queries.TouchGoogleAdsExportCredential(ctx, pgtype.UUID{Bytes: id, Valid: true})
+}
+
+// ─── INTERNAL HELPERS ────────────────────────────────────────────────────────
+
+func val(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func valUUID(u *uuid.UUID) [16]byte {
+	if u == nil {
+		return [16]byte{}
+	}
+	return *u
+}
+
+func ptr(s string, v bool) *string {
+	if !v {
+		return nil
+	}
+	return &s
+}
+
+func optionalTime(v pgtype.Timestamptz) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
+}
+
+func GenerateCredential() (string, string, error) {
+	u := make([]byte, 8)
+	p := make([]byte, 16)
+	if _, err := rand.Read(u); err != nil {
+		return "", "", err
+	}
+	if _, err := rand.Read(p); err != nil {
+		return "", "", err
+	}
+	return "gadsu_" + hex.EncodeToString(u), "gadsp_" + hex.EncodeToString(p), nil
 }

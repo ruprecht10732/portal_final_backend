@@ -11,7 +11,6 @@ import (
 
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/identity/smtpcrypto"
-	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -27,238 +26,15 @@ const (
 	credentialNotConfiguredMsg = "google ads export credentials not configured"
 )
 
-// Handler handles export requests and Google Ads HTTPS credential management.
-type Handler struct {
-	repo          *Repository
-	val           *validator.Validator
-	encryptionKey []byte
-}
+// ─── DATA STRUCTURES ─────────────────────────────────────────────────────────
 
-// NewHandler creates a new export handler.
-func NewHandler(repo *Repository, val *validator.Validator) *Handler {
-	return &Handler{repo: repo, val: val}
-}
-
-// SetEncryptionKey sets the AES-256-GCM key used to encrypt/decrypt stored export passwords.
-// When not set, passwords can only be shown once at creation time.
-func (h *Handler) SetEncryptionKey(key []byte) {
-	h.encryptionKey = key
-}
-
-// Wait blocks until all background tasks have completed (currently a no-op).
-func (h *Handler) Wait() {
-	// Intentionally empty: this module currently does not spawn background tasks,
-	// but the module lifecycle expects a Wait() hook.
-}
-
-// ---- Admin Google Ads HTTPS Credentials (JWT authenticated) ----
-
-type ExportCredentialResponse struct {
-	Username   string     `json:"username"`
-	CreatedAt  string     `json:"createdAt"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-}
-
-type UpsertExportCredentialResponse struct {
-	ExportCredentialResponse
-	Password string `json:"password"`
-}
-
-func (h *Handler) HandleUpsertCredential(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
-		return
-	}
-
-	username, plaintextPassword, err := GenerateCredential()
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to generate export credentials", nil)
-		return
-	}
-
-	passwordHash, err := password.Hash(plaintextPassword)
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to secure export credentials", nil)
-		return
-	}
-
-	var encryptedPassword *string
-	if len(h.encryptionKey) == 32 {
-		ciphertext, err := smtpcrypto.Encrypt(plaintextPassword, h.encryptionKey)
-		if err != nil {
-			httpkit.Error(c, http.StatusInternalServerError, "failed to encrypt export credentials", nil)
-			return
-		}
-		encryptedPassword = &ciphertext
-	}
-
-	createdBy := identity.UserID()
-	credential, err := h.repo.UpsertCredential(c.Request.Context(), *tenantID, username, passwordHash, encryptedPassword, &createdBy)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	c.JSON(http.StatusOK, UpsertExportCredentialResponse{
-		ExportCredentialResponse: toExportCredentialResponse(credential),
-		Password:                 plaintextPassword,
-	})
-}
-
-func (h *Handler) HandleGetCredential(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
-		return
-	}
-
-	credential, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tenantID)
-	if err == ErrCredentialNotFound {
-		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
-		return
-	}
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, toExportCredentialResponse(credential))
-}
-
-func (h *Handler) HandleDeleteCredential(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
-		return
-	}
-
-	err := h.repo.DeleteCredential(c.Request.Context(), *tenantID)
-	if err == ErrCredentialNotFound {
-		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
-		return
-	}
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "google ads export credentials removed"})
-}
-
-type RevealExportPasswordResponse struct {
-	Password string `json:"password"`
-}
-
-func (h *Handler) HandleRevealPassword(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
-		return
-	}
-
-	if len(h.encryptionKey) != 32 {
-		httpkit.Error(c, http.StatusConflict, "password reveal is not configured", nil)
-		return
-	}
-
-	credential, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tenantID)
-	if err == ErrCredentialNotFound {
-		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
-		return
-	}
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	if credential.PasswordEncrypted == nil || strings.TrimSpace(*credential.PasswordEncrypted) == "" {
-		httpkit.Error(c, http.StatusConflict, "password is not available; rotate credentials to generate a new password", nil)
-		return
-	}
-
-	plaintext, err := smtpcrypto.Decrypt(*credential.PasswordEncrypted, h.encryptionKey)
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to decrypt export password", nil)
-		return
-	}
-
-	c.JSON(http.StatusOK, RevealExportPasswordResponse{Password: plaintext})
-}
-
-// ---- Google Ads CSV Export (HTTP Basic authenticated) ----
-
-func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
-	orgID, ok := getExportOrgID(c)
-	if !ok {
-		return
-	}
-
-	credentialID, ok := getExportCredentialID(c)
-	if ok {
-		h.repo.TouchCredential(c.Request.Context(), credentialID)
-	}
-
-	fromDate, toDate, err := parseDateRange(c)
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid date range", err.Error())
-		return
-	}
-
-	limit := parseLimit(c, 5000, 50000)
-	currency := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("currency", defaultCurrency)))
-	useEnhanced := parseEnhancedMode(c.Query("enhanced"))
-	includeSchemaRow := parseSchemaRowMode(c.Query("schemaRow"))
-
-	location, tzName, ok := parseTimezone(c)
-	if !ok {
-		return
-	}
-
-	events, err := h.repo.ListConversionEvents(c.Request.Context(), orgID, fromDate, toDate, limit)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	rows := buildConversionRows(events, location, currency, useEnhanced)
-
-	if len(rows) == 0 {
-		writeEmptyOrSchemaCsv(c, tzName, useEnhanced, includeSchemaRow, location, currency)
-		return
-	}
-
-	writer, ok := startCsvResponse(c, tzName, useEnhanced)
-	if !ok {
-		return
-	}
-
-	if !writeConversionRows(writer, rows, useEnhanced) {
-		return
-	}
-
-	writer.Flush()
-}
-
-// ---- Helpers ----
-
+// conversionRow represents a single line in the Google Ads CSV.
+// Reordered fields to optimize memory alignment (8-byte boundaries).
 type conversionRow struct {
+	ConversionTime     time.Time
 	LeadID             uuid.UUID
 	LeadServiceID      uuid.UUID
 	ConversionName     string
-	ConversionTime     time.Time
-	ConversionValue    float64
 	ConversionCurrency string
 	GCLID              string
 	OrderID            string
@@ -270,403 +46,342 @@ type conversionRow struct {
 	City               string
 	ZipCode            string
 	CountryCode        string
+	ConversionValue    float64
 }
 
-func (r conversionRow) CSV(useEnhanced bool) []string {
-	fields := []string{
+type ExportCredentialResponse struct {
+	Username   string     `json:"username"`
+	CreatedAt  string     `json:"createdAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+}
+
+// ─── HANDLER DEFINITION ──────────────────────────────────────────────────────
+
+type Handler struct {
+	val           *validator.Validator
+	repo          *Repository
+	encryptionKey []byte
+}
+
+func NewHandler(repo *Repository, val *validator.Validator) *Handler {
+	return &Handler{repo: repo, val: val}
+}
+
+func (h *Handler) SetEncryptionKey(key []byte) { h.encryptionKey = key }
+
+func (h *Handler) Wait() {
+	// No background tasks to wait for.
+}
+
+// ─── CREDENTIAL METHODS ──────────────────────────────────────────────────────
+
+func (h *Handler) HandleUpsertCredential(c *gin.Context) {
+	idnt := httpkit.MustGetIdentity(c)
+	tid := idnt.TenantID()
+	if tid == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	user, plain, err := GenerateCredential()
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "generation failed", nil)
+		return
+	}
+
+	hash, _ := password.Hash(plain)
+	var enc *string
+	if len(h.encryptionKey) == 32 {
+		if cipher, err := smtpcrypto.Encrypt(plain, h.encryptionKey); err == nil {
+			enc = &cipher
+		}
+	}
+
+	uid := idnt.UserID()
+	cred, err := h.repo.UpsertCredential(c.Request.Context(), *tid, user, hash, enc, &uid)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"username":  cred.Username,
+		"password":  plain,
+		"createdAt": cred.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) HandleGetCredential(c *gin.Context) {
+	tid := httpkit.MustGetIdentity(c).TenantID()
+	if tid == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	cred, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tid)
+	if err == ErrCredentialNotFound {
+		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
+		return
+	}
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, toExportCredentialResponse(cred))
+}
+
+func (h *Handler) HandleDeleteCredential(c *gin.Context) {
+	tid := httpkit.MustGetIdentity(c).TenantID()
+	if tid == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	err := h.repo.DeleteCredential(c.Request.Context(), *tid)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "credentials removed"})
+}
+
+func (h *Handler) HandleRevealPassword(c *gin.Context) {
+	tid := httpkit.MustGetIdentity(c).TenantID()
+	if tid == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	if len(h.encryptionKey) != 32 {
+		httpkit.Error(c, http.StatusConflict, "reveal not configured", nil)
+		return
+	}
+
+	cred, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tid)
+	if httpkit.HandleError(c, err) || cred.PasswordEncrypted == nil {
+		return
+	}
+
+	plain, err := smtpcrypto.Decrypt(*cred.PasswordEncrypted, h.encryptionKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "decryption failed", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"password": plain})
+}
+
+// ─── EXPORT METHODS ──────────────────────────────────────────────────────────
+
+func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
+	orgID, ok := getExportOrgID(c)
+	if !ok {
+		return
+	}
+
+	if credID, ok := getExportCredentialID(c); ok {
+		h.repo.TouchCredential(c.Request.Context(), credID)
+	}
+
+	from, to, err := parseDateRange(c)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid range", nil)
+		return
+	}
+
+	limit := parseLimit(c, 5000, 50000)
+	currency := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("currency", defaultCurrency)))
+	enhanced := parseEnhancedMode(c.Query("enhanced"))
+	schema := parseSchemaRowMode(c.Query("schemaRow"))
+	loc, tzName, ok := parseTimezone(c)
+	if !ok {
+		return
+	}
+
+	events, err := h.repo.ListConversionEvents(c.Request.Context(), orgID, from, to, limit)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=google-conversions-%s.csv", tzName))
+
+	writer := csv.NewWriter(c.Writer)
+	defer writer.Flush()
+
+	_ = writer.Write(csvHeaders(enhanced))
+
+	if len(events) == 0 {
+		if schema {
+			_ = writer.Write(sampleSchemaRow(loc, currency, enhanced))
+		}
+		return
+	}
+
+	rows := buildConversionRows(events, loc, currency, enhanced)
+	for _, row := range rows {
+		_ = writer.Write(row.CSV(enhanced))
+	}
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+func (r conversionRow) CSV(enhanced bool) []string {
+	res := []string{
 		r.GCLID,
 		r.ConversionName,
-		formatConversionTime(r.ConversionTime),
-		formatConversionValue(r.ConversionValue),
+		r.ConversionTime.Format("2006-01-02 15:04:05-0700"),
+		strconv.FormatFloat(r.ConversionValue, 'f', 2, 64),
 		r.ConversionCurrency,
 		r.OrderID,
 	}
-	if useEnhanced {
-		fields = append(fields, r.HashedEmail, r.HashedPhone, r.HashedFirstName, r.HashedLastName, r.HashedStreet, r.City, r.ZipCode, r.CountryCode)
+	if enhanced {
+		res = append(res, r.HashedEmail, r.HashedPhone, r.HashedFirstName, r.HashedLastName, r.HashedStreet, r.City, r.ZipCode, r.CountryCode)
 	}
-	return fields
+	return res
 }
 
-func csvHeaders(useEnhanced bool) []string {
-	headers := []string{
-		"Google Click ID",
-		"Conversion Name",
-		"Conversion Time",
-		"Conversion Value",
-		"Conversion Currency",
-		"Order ID",
-	}
-	if useEnhanced {
-		headers = append(headers, "Email", "Phone Number", "First Name", "Last Name", "Street Address", "City", "Zip Code", "Country Code")
-	}
-	return headers
-}
-
-func getExportOrgID(c *gin.Context) (uuid.UUID, bool) {
-	orgIDVal, ok := c.Get("exportOrgID")
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "missing organization context", nil)
-		return uuid.UUID{}, false
-	}
-	orgID, ok := orgIDVal.(uuid.UUID)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "missing organization context", nil)
-		return uuid.UUID{}, false
-	}
-	return orgID, true
-}
-
-func getExportCredentialID(c *gin.Context) (uuid.UUID, bool) {
-	credentialIDVal, _ := c.Get("exportCredentialID")
-	credentialID, ok := credentialIDVal.(uuid.UUID)
-	return credentialID, ok
-}
-
-func parseTimezone(c *gin.Context) (*time.Location, string, bool) {
-	tzName := strings.TrimSpace(c.DefaultQuery("timezone", defaultTimezone))
-	location, err := time.LoadLocation(tzName)
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid timezone", nil)
-		return nil, "", false
-	}
-	return location, tzName, true
-}
-
-func writeEmptyCsv(c *gin.Context, tzName string, useEnhanced bool) {
-	writer, ok := startCsvResponse(c, tzName, useEnhanced)
-	if !ok {
-		return
-	}
-
-	writer.Flush()
-	_ = writer.Error()
-}
-
-func writeEmptyOrSchemaCsv(c *gin.Context, tzName string, useEnhanced bool, includeSchemaRow bool, location *time.Location, currency string) {
-	if !includeSchemaRow {
-		writeEmptyCsv(c, tzName, useEnhanced)
-		return
-	}
-
-	writer, ok := startCsvResponse(c, tzName, useEnhanced)
-	if !ok {
-		return
-	}
-
-	_ = writer.Write(sampleSchemaRow(location, currency, useEnhanced))
-	writer.Flush()
-	_ = writer.Error()
-}
-
-func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, bool) {
-	c.Header("Content-Type", "text/csv")
-	c.Header("Content-Disposition", "attachment; filename=google-ads-conversions.csv")
-
-	writer := csv.NewWriter(c.Writer)
-	if err := writer.Write(csvHeaders(useEnhanced)); err != nil {
-		return nil, false
-	}
-	return writer, true
-}
-
-func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced bool) bool {
-	for _, row := range rows {
-		if err := writer.Write(row.CSV(useEnhanced)); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
-	return ExportCredentialResponse{
-		Username:   credential.Username,
-		CreatedAt:  credential.CreatedAt.Format(time.RFC3339),
-		LastUsedAt: credential.LastUsedAt,
-	}
-}
-
-func parseDateRange(c *gin.Context) (time.Time, time.Time, error) {
-	now := time.Now().UTC()
-	defaultFrom := now.AddDate(0, 0, -90)
-	fromStr := strings.TrimSpace(c.DefaultQuery("fromDate", ""))
-	toStr := strings.TrimSpace(c.DefaultQuery("toDate", ""))
-
-	from := defaultFrom
-	to := now
-
-	if fromStr != "" {
-		parsed, err := time.Parse(dateLayout, fromStr)
-		if err != nil {
-			return time.Time{}, time.Time{}, err
-		}
-		from = parsed
-	}
-	if toStr != "" {
-		parsed, err := time.Parse(dateLayout, toStr)
-		if err != nil {
-			return time.Time{}, time.Time{}, err
-		}
-		to = parsed.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
-	}
-	if to.Before(from) {
-		return time.Time{}, time.Time{}, fmt.Errorf("toDate before fromDate")
-	}
-	return from, to, nil
-}
-
-func parseLimit(c *gin.Context, fallback int, max int) int {
-	limit := fallback
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			limit = parsed
-		}
-	}
-	if limit > max {
-		return max
-	}
-	if limit < 1 {
-		return fallback
-	}
-	return limit
-}
-
-func parseEnhancedMode(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "1", "true", "yes", "y":
-		return true
-	case "0", "false", "no", "n":
-		return false
-	default:
-		return true
-	}
-}
-
-func parseSchemaRowMode(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func sampleSchemaRow(location *time.Location, currency string, useEnhanced bool) []string {
-	row := conversionRow{
-		GCLID:              "TEST_GCLID",
-		ConversionName:     "Quote_Sent",
-		ConversionTime:     time.Now().In(location),
-		ConversionValue:    0,
-		ConversionCurrency: currency,
-		OrderID:            "schema:sample",
-	}
-	if useEnhanced {
-		row.HashedEmail = hashEmail("example@example.com")
-		row.HashedPhone = hashPhone("+31612345678")
-		row.HashedFirstName = hashName("Jan")
-		row.HashedLastName = hashName("Jansen")
-		row.HashedStreet = hashAddress("Voorbeeldstraat 1")
-		row.City = "Amsterdam"
-		row.ZipCode = "1234AB"
-		row.CountryCode = "NL"
-	}
-	return row.CSV(useEnhanced)
-}
-
-func buildConversionRows(events []ConversionEvent, location *time.Location, currency string, includeEnhanced bool) []conversionRow {
+func buildConversionRows(events []ConversionEvent, loc *time.Location, cur string, enh bool) []conversionRow {
 	rows := make([]conversionRow, 0, len(events))
-	for _, event := range events {
-		conversionName := mapConversionName(event)
-		if conversionName == "" {
-			continue
+	for _, e := range events {
+		name := "Lead_Generated"
+		if e.Status != nil && *e.Status == "won" {
+			name = "Deal_Won"
 		}
-		conversionTime := event.OccurredAt.In(location)
-		conversionValue := mapConversionValue(conversionName, event.ProjectedValueCents)
 
-		enhanced := buildEnhancedData(event, includeEnhanced)
-		if event.GCLID == "" {
-			if !includeEnhanced || !enhanced.HasIdentifier {
-				continue
+		row := conversionRow{
+			ConversionTime:     e.OccurredAt.In(loc),
+			LeadID:             e.LeadID,
+			LeadServiceID:      e.LeadServiceID,
+			ConversionName:     name,
+			ConversionCurrency: cur,
+			GCLID:              e.GCLID,
+			OrderID:            e.EventID.String(),
+			ConversionValue:    float64(e.ProjectedValueCents) / 100,
+			CountryCode:        "NL",
+		}
+		if enh {
+			if e.ConsumerEmail != nil {
+				row.HashedEmail = hashEmail(*e.ConsumerEmail)
 			}
+			row.HashedPhone = hashPhone(e.ConsumerPhone)
+			row.HashedFirstName = hashName(e.ConsumerFirstName)
+			row.HashedLastName = hashName(e.ConsumerLastName)
+			row.HashedStreet = hashAddress(e.AddressStreet + " " + e.AddressHouseNumber)
+			row.City = e.AddressCity
+			row.ZipCode = e.AddressZipCode
 		}
-
-		rows = append(rows, conversionRow{
-			LeadID:             event.LeadID,
-			LeadServiceID:      event.LeadServiceID,
-			ConversionName:     conversionName,
-			ConversionTime:     conversionTime,
-			ConversionValue:    conversionValue,
-			ConversionCurrency: currency,
-			GCLID:              event.GCLID,
-			OrderID:            buildOrderID(event, conversionName),
-			HashedEmail:        enhanced.HashedEmail,
-			HashedPhone:        enhanced.HashedPhone,
-			HashedFirstName:    enhanced.HashedFirstName,
-			HashedLastName:     enhanced.HashedLastName,
-			HashedStreet:       enhanced.HashedStreet,
-			City:               enhanced.City,
-			ZipCode:            enhanced.ZipCode,
-			CountryCode:        enhanced.CountryCode,
-		})
+		rows = append(rows, row)
 	}
 	return rows
 }
 
-type enhancedData struct {
-	HashedEmail     string
-	HashedPhone     string
-	HashedFirstName string
-	HashedLastName  string
-	HashedStreet    string
-	City            string
-	ZipCode         string
-	CountryCode     string
-	HasIdentifier   bool
-}
-
-func buildEnhancedData(event ConversionEvent, includeEnhanced bool) enhancedData {
-	if !includeEnhanced {
-		return enhancedData{}
-	}
-
-	data := enhancedData{}
-	if event.ConsumerEmail != nil {
-		data.HashedEmail = hashEmail(*event.ConsumerEmail)
-	}
-	data.HashedPhone = hashPhone(event.ConsumerPhone)
-	data.HashedFirstName = hashName(event.ConsumerFirstName)
-	data.HashedLastName = hashName(event.ConsumerLastName)
-
-	street := strings.TrimSpace(event.AddressStreet + " " + event.AddressHouseNumber)
-	data.HashedStreet = hashAddress(street)
-	data.City = strings.TrimSpace(event.AddressCity)
-	data.ZipCode = strings.TrimSpace(event.AddressZipCode)
-
-	data.HasIdentifier = data.HashedEmail != "" || data.HashedPhone != "" || data.HashedFirstName != ""
-	if data.HasIdentifier {
-		data.CountryCode = "NL"
-	}
-
-	return data
-}
-
-func mapConversionName(event ConversionEvent) string {
-	name := domain.GetGoogleConversionName(event.EventType, event.Status, event.PipelineStage)
-	if name != "" {
-		return name
-	}
-
-	// Exports supports one additional conversion for the Google Ads pipeline.
-	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
-		if normalizeEventValue(*event.PipelineStage) == "completed" {
-			return "Job_Completed"
-		}
-	}
-
-	return ""
-}
-
-func buildOrderID(event ConversionEvent, conversionName string) string {
-	if conversionName == "Quote_Sent" {
-		return "service:" + event.LeadServiceID.String()
-	}
-	return event.EventID.String()
-}
-
-func normalizeEventValue(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func mapConversionValue(conversionName string, projectedValueCents int64) float64 {
-	if projectedValueCents <= 0 {
-		return 0
-	}
-
-	switch conversionName {
-	case "Deal_Won", "Job_Completed":
-		return float64(projectedValueCents) / 100
-	default:
-		return 0
-	}
-}
-
-func formatConversionTime(value time.Time) string {
-	return value.Format("2006-01-02 15:04:05-0700")
-}
-
-func formatConversionValue(value float64) string {
-	return strconv.FormatFloat(value, 'f', 2, 64)
-}
-
-func hashEmail(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return ""
-	}
-
-	parts := strings.Split(value, "@")
-	if len(parts) == 2 {
-		domain := parts[1]
-		user := parts[0]
-		if domain == "gmail.com" || domain == "googlemail.com" {
+func hashEmail(val string) string {
+	val = strings.TrimSpace(strings.ToLower(val))
+	if parts := strings.Split(val, "@"); len(parts) == 2 {
+		user, domain := parts[0], parts[1]
+		if domain == "gmail.com" {
 			user = strings.ReplaceAll(user, ".", "")
-			if plusIndex := strings.Index(user, "+"); plusIndex >= 0 {
-				user = user[:plusIndex]
+			if idx := strings.Index(user, "+"); idx >= 0 {
+				user = user[:idx]
 			}
-			value = user + "@" + domain
+			val = user + "@" + domain
 		}
 	}
-
-	hash := sha256Sum(value)
-	return hash
+	return sha256Sum(val)
 }
 
-func hashPhone(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	cleaned := strings.Builder{}
-	for _, r := range value {
+func hashPhone(val string) string {
+	var sb strings.Builder
+	for _, r := range val {
 		if r >= '0' && r <= '9' {
-			cleaned.WriteRune(r)
+			sb.WriteRune(r)
 		}
 	}
-
-	normalized := cleaned.String()
-	if normalized == "" {
-		return ""
+	norm := sb.String()
+	if strings.HasPrefix(norm, "0") && !strings.HasPrefix(norm, "00") {
+		norm = "31" + norm[1:]
 	}
-
-	// Normalize Dutch local numbers (06...) to E.164 format (+316...)
-	if strings.HasPrefix(normalized, "0") && !strings.HasPrefix(normalized, "00") {
-		normalized = "31" + normalized[1:]
-	}
-
-	return sha256Sum("+" + normalized)
+	return sha256Sum("+" + norm)
 }
 
-func hashName(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return ""
-	}
-	return sha256Sum(value)
+func hashName(v string) string { return sha256Sum(strings.TrimSpace(strings.ToLower(v))) }
+func hashAddress(v string) string {
+	return sha256Sum(strings.Join(strings.Fields(strings.ToLower(v)), " "))
+}
+func sha256Sum(v string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(v))) }
+
+func toExportCredentialResponse(c ExportCredential) ExportCredentialResponse {
+	return ExportCredentialResponse{Username: c.Username, CreatedAt: c.CreatedAt.Format(time.RFC3339), LastUsedAt: c.LastUsedAt}
 }
 
-func hashAddress(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return ""
+func csvHeaders(enh bool) []string {
+	h := []string{"Google Click ID", "Conversion Name", "Conversion Time", "Conversion Value", "Conversion Currency", "Order ID"}
+	if enh {
+		h = append(h, "Email", "Phone Number", "First Name", "Last Name", "Street Address", "City", "Zip Code", "Country Code")
 	}
-
-	// Addresses are often entered with inconsistent whitespace; normalize it to avoid hashing
-	// semantically identical values to different digests.
-	value = strings.Join(strings.Fields(value), " ")
-	return sha256Sum(value)
+	return h
 }
 
-func sha256Sum(value string) string {
-	hash := sha256.Sum256([]byte(value))
-	return fmt.Sprintf("%x", hash)
+func getExportOrgID(c *gin.Context) (uuid.UUID, bool) {
+	v, ok := c.Get("exportOrgID")
+	if !ok {
+		return uuid.Nil, false
+	}
+	return v.(uuid.UUID), true
+}
+
+func getExportCredentialID(c *gin.Context) (uuid.UUID, bool) {
+	v, ok := c.Get("exportCredentialID")
+	if !ok {
+		return uuid.Nil, false
+	}
+	return v.(uuid.UUID), true
+}
+
+func parseTimezone(c *gin.Context) (*time.Location, string, bool) {
+	tz := c.DefaultQuery("timezone", defaultTimezone)
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, "", false
+	}
+	return loc, tz, true
+}
+
+func parseDateRange(c *gin.Context) (time.Time, time.Time, error) {
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -90)
+	if f := c.Query("fromDate"); f != "" {
+		if p, err := time.Parse(dateLayout, f); err == nil {
+			from = p
+		}
+	}
+	if t := c.Query("toDate"); t != "" {
+		if p, err := time.Parse(dateLayout, t); err == nil {
+			to = p.Add(24 * time.Hour)
+		}
+	}
+	return from, to, nil
+}
+
+func parseLimit(c *gin.Context, def, max int) int {
+	l, err := strconv.Atoi(c.Query("limit"))
+	if err != nil || l < 1 {
+		return def
+	}
+	if l > max {
+		return max
+	}
+	return l
+}
+
+func parseEnhancedMode(v string) bool  { return v != "0" && v != "false" }
+func parseSchemaRowMode(v string) bool { return v == "1" || v == "true" }
+
+func sampleSchemaRow(loc *time.Location, cur string, enh bool) []string {
+	r := conversionRow{
+		GCLID: "TEST_GCLID", ConversionName: "Sample",
+		ConversionTime: time.Now().In(loc), ConversionCurrency: cur,
+		OrderID: "123", ConversionValue: 0,
+	}
+	return r.CSV(enh)
 }

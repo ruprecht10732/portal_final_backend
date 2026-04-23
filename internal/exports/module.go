@@ -7,50 +7,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Module is the exports bounded context module implementing http.Module.
 type Module struct {
 	handler *Handler
 	repo    *Repository
 }
 
-// NewModule creates and initializes the exports module.
 func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
 	repo := NewRepository(pool)
-	handler := NewHandler(repo, val)
-
 	return &Module{
-		handler: handler,
+		handler: NewHandler(repo, val),
 		repo:    repo,
 	}
 }
 
-// SetEncryptionKey sets the AES key used for encrypting/decrypting export passwords.
-func (m *Module) SetEncryptionKey(key []byte) {
-	m.handler.SetEncryptionKey(key)
-}
+func (m *Module) SetEncryptionKey(key []byte) { m.handler.SetEncryptionKey(key) }
+func (m *Module) Name() string                { return "exports" }
 
-// Name returns the module identifier.
-func (m *Module) Name() string {
-	return "exports"
-}
-
-// RegisterRoutes mounts export routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	publicGroup := ctx.V1.Group("/exports")
-	publicGroup.Use(BasicAuthMiddleware(m.repo))
-	publicGroup.GET("/google-ads/conversions.csv", m.handler.ExportGoogleAdsCSV)
+	public := ctx.V1.Group("/exports")
+	public.Use(BasicAuthMiddleware(m.repo))
+	public.GET("/google-ads/conversions.csv", m.handler.ExportGoogleAdsCSV)
 
-	const credentialsPath = "/credentials"
-
-	adminGroup := ctx.Admin.Group("/exports")
-	adminGroup.POST(credentialsPath, m.handler.HandleUpsertCredential)
-	adminGroup.GET(credentialsPath, m.handler.HandleGetCredential)
-	adminGroup.GET(credentialsPath+"/password", m.handler.HandleRevealPassword)
-	adminGroup.DELETE(credentialsPath, m.handler.HandleDeleteCredential)
+	admin := ctx.Admin.Group("/exports")
+	{
+		const path = "/credentials"
+		admin.POST(path, m.handler.HandleUpsertCredential)
+		admin.GET(path, m.handler.HandleGetCredential)
+		admin.GET(path+"/password", m.handler.HandleRevealPassword)
+		admin.DELETE(path, m.handler.HandleDeleteCredential)
+	}
 }
 
-// Wait blocks until all background tasks in the exports module have completed.
-// Call this during graceful server shutdown.
 func (m *Module) Wait() { m.handler.Wait() }
 
 var _ apphttp.Module = (*Module)(nil)

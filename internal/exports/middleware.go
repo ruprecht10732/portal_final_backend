@@ -12,33 +12,24 @@ import (
 
 const exportAuthChallenge = `Basic realm="google-ads-export", charset="UTF-8"`
 
-func respondUnauthorized(c *gin.Context, message string) {
-	c.Header("WWW-Authenticate", exportAuthChallenge)
-	httpkit.Error(c, http.StatusUnauthorized, message, nil)
-}
-
-// BasicAuthMiddleware validates HTTP Basic Auth credentials for public export endpoints.
 func BasicAuthMiddleware(repo *Repository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		username, plaintextPassword, ok := c.Request.BasicAuth()
-		if !ok || strings.TrimSpace(username) == "" || strings.TrimSpace(plaintextPassword) == "" {
-			respondUnauthorized(c, "missing export basic auth credentials")
+		user, plain, ok := c.Request.BasicAuth()
+		if !ok || strings.TrimSpace(user) == "" {
+			c.Header("WWW-Authenticate", exportAuthChallenge)
+			httpkit.Error(c, http.StatusUnauthorized, "missing credentials", nil)
 			return
 		}
 
-		credential, err := repo.GetCredentialByUsername(c.Request.Context(), strings.TrimSpace(username))
-		if err != nil {
-			respondUnauthorized(c, "invalid export credentials")
+		cred, err := repo.GetCredentialByUsername(c.Request.Context(), strings.TrimSpace(user))
+		if err != nil || password.Compare(cred.PasswordHash, plain) != nil {
+			c.Header("WWW-Authenticate", exportAuthChallenge)
+			httpkit.Error(c, http.StatusUnauthorized, "invalid credentials", nil)
 			return
 		}
 
-		if err := password.Compare(credential.PasswordHash, plaintextPassword); err != nil {
-			respondUnauthorized(c, "invalid export credentials")
-			return
-		}
-
-		c.Set("exportOrgID", credential.OrganizationID)
-		c.Set("exportCredentialID", credential.ID)
+		c.Set("exportOrgID", cred.OrganizationID)
+		c.Set("exportCredentialID", cred.ID)
 		c.Next()
 	}
 }
