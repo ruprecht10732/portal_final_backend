@@ -21,9 +21,7 @@ func (s *staticToolset) Name() string {
 }
 
 func (s *staticToolset) Tools(agent.ReadonlyContext) ([]tool.Tool, error) {
-	cloned := make([]tool.Tool, len(s.tools))
-	copy(cloned, s.tools)
-	return cloned, nil
+	return s.tools, nil
 }
 
 func BuildWorkspaceToolsets(workspace Workspace, name string, tools []tool.Tool) []tool.Toolset {

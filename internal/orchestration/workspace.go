@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -359,22 +360,28 @@ func loadSkillFile(rootDir, relativePath string) (parsedSkillFile, error) {
 
 func parseSkillFrontmatter(content, relativePath string) (skillFrontmatter, string, error) {
 	normalized := strings.ReplaceAll(content, "\r\n", "\n")
-	lines := strings.Split(normalized, "\n")
-	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+	
+	firstNewline := strings.Index(normalized, "\n")
+	if firstNewline == -1 {
+		firstNewline = len(normalized)
+	}
+	if strings.TrimSpace(normalized[:firstNewline]) != "---" {
 		return skillFrontmatter{}, "", fmt.Errorf("read %s: missing YAML frontmatter", filepath.ToSlash(relativePath))
 	}
-	closingIndex := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			closingIndex = i
-			break
-		}
-	}
+
+	closingIndex, endOfClosingLine := findSkillFrontmatterClosingIndex(normalized, firstNewline+1)
+
 	if closingIndex == -1 {
 		return skillFrontmatter{}, "", fmt.Errorf("read %s: unterminated YAML frontmatter", filepath.ToSlash(relativePath))
 	}
+
+	frontmatter := normalized[firstNewline+1 : closingIndex]
+	var body string
+	if endOfClosingLine < len(normalized) {
+		body = strings.TrimSpace(normalized[endOfClosingLine:])
+	}
+
 	var metadata skillFrontmatter
-	frontmatter := strings.Join(lines[1:closingIndex], "\n")
 	if err := yaml.Unmarshal([]byte(frontmatter), &metadata); err != nil {
 		return skillFrontmatter{}, "", fmt.Errorf("parse %s frontmatter: %w", filepath.ToSlash(relativePath), err)
 	}
@@ -384,7 +391,6 @@ func parseSkillFrontmatter(content, relativePath string) (skillFrontmatter, stri
 	if strings.TrimSpace(metadata.Description) == "" {
 		return skillFrontmatter{}, "", fmt.Errorf("read %s: description is required", filepath.ToSlash(relativePath))
 	}
-	body := strings.TrimSpace(strings.Join(lines[closingIndex+1:], "\n"))
 	if body == "" {
 		return skillFrontmatter{}, "", fmt.Errorf("read %s: markdown body is required", filepath.ToSlash(relativePath))
 	}
@@ -394,6 +400,30 @@ func parseSkillFrontmatter(content, relativePath string) (skillFrontmatter, stri
 		}
 	}
 	return metadata, body, nil
+}
+
+func findSkillFrontmatterClosingIndex(normalized string, startIdx int) (closingIndex int, endOfClosingLine int) {
+	current := startIdx
+	for current < len(normalized) {
+		nextNewline := strings.Index(normalized[current:], "\n")
+		var line string
+		var absoluteNext int
+		
+		if nextNewline == -1 {
+			line = normalized[current:]
+			absoluteNext = len(normalized)
+		} else {
+			line = normalized[current : current+nextNewline]
+			absoluteNext = current + nextNewline
+		}
+		
+		if strings.TrimSpace(line) == "---" {
+			return current, absoluteNext
+		}
+		
+		current = absoluteNext + 1
+	}
+	return -1, -1
 }
 
 func skillAllowedTools(metadata skillFrontmatter) []string {
@@ -516,12 +546,24 @@ func fileExists(path string) bool {
 }
 
 func shortInstructionHash(instruction string) string {
-	sum := sha256.Sum256([]byte(instruction))
+	h := sha256.New()
+	io.WriteString(h, instruction)
+	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:8])
 }
 
 func readAgentWorkspaceFile(rootDir, relativePath string) (string, error) {
-	fullPath := filepath.Join(rootDir, filepath.FromSlash(relativePath))
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", fmt.Errorf(readFileErrorFormat, filepath.ToSlash(relativePath), err)
+	}
+	fullPath := filepath.Join(absRoot, filepath.FromSlash(relativePath))
+	
+	rel, err := filepath.Rel(absRoot, fullPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("read %s: path traversal attempt", filepath.ToSlash(relativePath))
+	}
+
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		return "", fmt.Errorf(readFileErrorFormat, filepath.ToSlash(relativePath), err)
