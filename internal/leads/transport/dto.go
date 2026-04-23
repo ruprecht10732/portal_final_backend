@@ -171,8 +171,18 @@ type ListLeadsRequest struct {
 }
 
 type LeadHeatmapRequest struct {
-	StartDate string `form:"startDate"`
-	EndDate   string `form:"endDate"`
+	StartDate string `form:"startDate" validate:"omitempty,datetime=2006-01-02"`
+	EndDate   string `form:"endDate" validate:"omitempty,datetime=2006-01-02"`
+}
+
+// PhotoAnalysisRequest is the request to analyze photos.
+type PhotoAnalysisRequest struct {
+	Context string `json:"context"` // Optional context about the issue
+}
+
+// AgentApprovalDecisionRequest is the body for approve/reject agent approval actions.
+type AgentApprovalDecisionRequest struct {
+	Reason string `json:"reason" validate:"omitempty,max=500"`
 }
 
 type ActionItemsRequest struct {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	leadsdb "portal_final_backend/internal/leads/db"
 )
@@ -228,102 +229,42 @@ func (r *Repository) ListTimelineEventsByService(ctx context.Context, leadID uui
 	return items, nil
 }
 
-func timelineEventFromCreateRow(row leadsdb.CreateTimelineEventRow) TimelineEvent {
+func timelineEventFromSource(id, leadID, serviceID, organizationID pgtype.UUID, actorType, actorName, eventType, title string, summary pgtype.Text, metadata []byte, visibility string, createdAt pgtype.Timestamptz) TimelineEvent {
 	event := TimelineEvent{
-		ID:             row.ID.Bytes,
-		LeadID:         row.LeadID.Bytes,
-		ServiceID:      optionalUUID(row.ServiceID),
-		OrganizationID: row.OrganizationID.Bytes,
-		ActorType:      row.ActorType,
-		ActorName:      row.ActorName,
-		EventType:      row.EventType,
-		Title:          row.Title,
-		Summary:        optionalString(row.Summary),
-		Visibility:     normalizeTimelineVisibility(row.Visibility),
-		CreatedAt:      row.CreatedAt.Time,
+		ID:             id.Bytes,
+		LeadID:         leadID.Bytes,
+		ServiceID:      optionalUUID(serviceID),
+		OrganizationID: organizationID.Bytes,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      eventType,
+		Title:          title,
+		Summary:        optionalString(summary),
+		Visibility:     normalizeTimelineVisibility(visibility),
+		CreatedAt:      createdAt.Time,
 	}
-	if len(row.Metadata) > 0 {
-		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	if len(metadata) > 0 {
+		_ = json.Unmarshal(metadata, &event.Metadata)
 	}
 	return event
+}
+
+func timelineEventFromCreateRow(row leadsdb.CreateTimelineEventRow) TimelineEvent {
+	return timelineEventFromSource(row.ID, row.LeadID, row.ServiceID, row.OrganizationID, row.ActorType, row.ActorName, row.EventType, row.Title, row.Summary, row.Metadata, row.Visibility, row.CreatedAt)
 }
 
 func timelineEventFromDuplicateRow(row leadsdb.FindRecentDuplicateTimelineEventRow) TimelineEvent {
-	event := TimelineEvent{
-		ID:             row.ID.Bytes,
-		LeadID:         row.LeadID.Bytes,
-		ServiceID:      optionalUUID(row.ServiceID),
-		OrganizationID: row.OrganizationID.Bytes,
-		ActorType:      row.ActorType,
-		ActorName:      row.ActorName,
-		EventType:      row.EventType,
-		Title:          row.Title,
-		Summary:        optionalString(row.Summary),
-		Visibility:     normalizeTimelineVisibility(row.Visibility),
-		CreatedAt:      row.CreatedAt.Time,
-	}
-	if len(row.Metadata) > 0 {
-		_ = json.Unmarshal(row.Metadata, &event.Metadata)
-	}
-	return event
+	return timelineEventFromSource(row.ID, row.LeadID, row.ServiceID, row.OrganizationID, row.ActorType, row.ActorName, row.EventType, row.Title, row.Summary, row.Metadata, row.Visibility, row.CreatedAt)
 }
 
 func timelineEventFromAlertDuplicateRow(row leadsdb.FindRecentDuplicateAlertByTitleRow) TimelineEvent {
-	event := TimelineEvent{
-		ID:             row.ID.Bytes,
-		LeadID:         row.LeadID.Bytes,
-		ServiceID:      optionalUUID(row.ServiceID),
-		OrganizationID: row.OrganizationID.Bytes,
-		ActorType:      row.ActorType,
-		ActorName:      row.ActorName,
-		EventType:      row.EventType,
-		Title:          row.Title,
-		Summary:        optionalString(row.Summary),
-		Visibility:     normalizeTimelineVisibility(row.Visibility),
-		CreatedAt:      row.CreatedAt.Time,
-	}
-	if len(row.Metadata) > 0 {
-		_ = json.Unmarshal(row.Metadata, &event.Metadata)
-	}
-	return event
+	return timelineEventFromSource(row.ID, row.LeadID, row.ServiceID, row.OrganizationID, row.ActorType, row.ActorName, row.EventType, row.Title, row.Summary, row.Metadata, row.Visibility, row.CreatedAt)
 }
 
 func timelineEventFromListRow(row leadsdb.ListTimelineEventsRow) TimelineEvent {
-	event := TimelineEvent{
-		ID:             row.ID.Bytes,
-		LeadID:         row.LeadID.Bytes,
-		ServiceID:      optionalUUID(row.ServiceID),
-		OrganizationID: row.OrganizationID.Bytes,
-		ActorType:      row.ActorType,
-		ActorName:      row.ActorName,
-		EventType:      row.EventType,
-		Title:          row.Title,
-		Summary:        optionalString(row.Summary),
-		Visibility:     normalizeTimelineVisibility(row.Visibility),
-		CreatedAt:      row.CreatedAt.Time,
-	}
-	if len(row.Metadata) > 0 {
-		_ = json.Unmarshal(row.Metadata, &event.Metadata)
-	}
-	return event
+	return timelineEventFromSource(row.ID, row.LeadID, row.ServiceID, row.OrganizationID, row.ActorType, row.ActorName, row.EventType, row.Title, row.Summary, row.Metadata, row.Visibility, row.CreatedAt)
 }
 
 func timelineEventFromListByServiceRow(row leadsdb.ListTimelineEventsByServiceRow) TimelineEvent {
-	event := TimelineEvent{
-		ID:             row.ID.Bytes,
-		LeadID:         row.LeadID.Bytes,
-		ServiceID:      optionalUUID(row.ServiceID),
-		OrganizationID: row.OrganizationID.Bytes,
-		ActorType:      row.ActorType,
-		ActorName:      row.ActorName,
-		EventType:      row.EventType,
-		Title:          row.Title,
-		Summary:        optionalString(row.Summary),
-		Visibility:     normalizeTimelineVisibility(row.Visibility),
-		CreatedAt:      row.CreatedAt.Time,
-	}
-	if len(row.Metadata) > 0 {
-		_ = json.Unmarshal(row.Metadata, &event.Metadata)
-	}
-	return event
+	return timelineEventFromSource(row.ID, row.LeadID, row.ServiceID, row.OrganizationID, row.ActorType, row.ActorName, row.EventType, row.Title, row.Summary, row.Metadata, row.Visibility, row.CreatedAt)
 }

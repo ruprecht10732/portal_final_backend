@@ -193,6 +193,35 @@ func toPgBoolPtr(value *bool) pgtype.Bool {
 	return pgtype.Bool{Bool: *value, Valid: true}
 }
 
+func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, toPgUUID(id))
+	}
+	return out
+}
+
+// marshalJSONSlice marshals a slice to JSON, ensuring nil becomes [] instead of null.
+func marshalJSONSlice[T any](v []T) []byte {
+	if v == nil {
+		v = []T{}
+	}
+	data, _ := json.Marshal(v)
+	return data
+}
+
+// marshalJSONMap marshals a map to JSON, ensuring nil becomes {} instead of null.
+func marshalJSONMap[K comparable, V any](v map[K]V) []byte {
+	if v == nil {
+		v = map[K]V{}
+	}
+	data, _ := json.Marshal(v)
+	return data
+}
+
 func optionalString(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil
@@ -1158,4 +1187,27 @@ func (r *Repository) BulkDelete(ctx context.Context, ids []uuid.UUID, organizati
 		return 0, err
 	}
 	return int(result), nil
+}
+
+func (r *Repository) GetByPublicToken(ctx context.Context, token string) (Lead, error) {
+	row, err := r.queries.GetLeadByPublicToken(ctx, toPgTextValue(token))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Lead{}, ErrNotFound
+	}
+	if err != nil {
+		return Lead{}, err
+	}
+	if row.DeletedAt.Valid {
+		return Lead{}, ErrNotFound
+	}
+	return leadFromDB(row), nil
+}
+
+func (r *Repository) SetPublicToken(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, token string, expiresAt time.Time) error {
+	return r.queries.SetLeadPublicToken(ctx, leadsdb.SetLeadPublicTokenParams{
+		ID:                   toPgUUID(id),
+		OrganizationID:       toPgUUID(organizationID),
+		PublicToken:          toPgTextValue(token),
+		PublicTokenExpiresAt: toPgTimestamp(expiresAt),
+	})
 }

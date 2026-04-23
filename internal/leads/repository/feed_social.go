@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	leadsdb "portal_final_backend/internal/leads/db"
 )
@@ -26,22 +25,21 @@ func (r *Repository) ToggleReaction(ctx context.Context, eventID, eventSource, r
 		OrgID:        toPgUUID(orgID),
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("delete feed reaction: %w", err)
 	}
 	if rowsAffected > 0 {
 		return false, nil // removed
 	}
 
 	// Not present → insert
-	err = r.queries.CreateFeedReaction(ctx, leadsdb.CreateFeedReactionParams{
+	if err := r.queries.CreateFeedReaction(ctx, leadsdb.CreateFeedReactionParams{
 		EventID:      eventID,
 		EventSource:  eventSource,
 		ReactionType: reactionType,
 		UserID:       toPgUUID(userID),
 		OrgID:        toPgUUID(orgID),
-	})
-	if err != nil {
-		return false, err
+	}); err != nil {
+		return false, fmt.Errorf("create feed reaction: %w", err)
 	}
 	return true, nil
 }
@@ -85,7 +83,16 @@ func (r *Repository) ListReactionsByEvents(ctx context.Context, eventIDs []strin
 // ──────────────────────────────────────────────────
 
 func (r *Repository) CreateComment(ctx context.Context, eventID, eventSource string, userID, orgID uuid.UUID, body string, mentionIDs []uuid.UUID) (FeedComment, error) {
-	row, err := r.queries.CreateFeedComment(ctx, leadsdb.CreateFeedCommentParams{
+	// Use a transaction so comment + mentions are atomic.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return FeedComment{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	row, err := qtx.CreateFeedComment(ctx, leadsdb.CreateFeedCommentParams{
 		EventID:     eventID,
 		EventSource: eventSource,
 		UserID:      toPgUUID(userID),
@@ -97,14 +104,18 @@ func (r *Repository) CreateComment(ctx context.Context, eventID, eventSource str
 	}
 	c := feedCommentFromRow(row)
 
-	// Insert mentions
 	for _, mentionedID := range mentionIDs {
-		_ = r.queries.CreateFeedCommentMention(ctx, leadsdb.CreateFeedCommentMentionParams{
+		if err := qtx.CreateFeedCommentMention(ctx, leadsdb.CreateFeedCommentMentionParams{
 			CommentID:       toPgUUID(c.ID),
 			MentionedUserID: toPgUUID(mentionedID),
-		})
+		}); err != nil {
+			return FeedComment{}, fmt.Errorf("insert mention: %w", err)
+		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return FeedComment{}, fmt.Errorf("commit tx: %w", err)
+	}
 	return c, nil
 }
 
@@ -213,17 +224,6 @@ func (r *Repository) ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]Org
 		out = append(out, OrgMember{ID: uuid.UUID(row.ID.Bytes), Email: row.Email, Roles: roles})
 	}
 	return out, nil
-}
-
-func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]pgtype.UUID, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, toPgUUID(id))
-	}
-	return out
 }
 
 func feedReactionFromRow(row leadsdb.ListReactionsByEventRow) FeedReaction {

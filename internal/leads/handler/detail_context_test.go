@@ -169,7 +169,7 @@ func newDetailContextTestState() detailContextTestState {
 		},
 	}})
 
-	h := New(HandlerDeps{Mgmt: mgmt, NotesHandler: &NotesHandler{}, EventBus: events.NewInMemoryBus(nil), Repo: repo})
+	h := New(HandlerDeps{Mgmt: mgmt, EventBus: events.NewInMemoryBus(nil), Repo: repo})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(httpkit.ContextUserIDKey, userID)

@@ -572,49 +572,6 @@ func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 	return []tool.Tool{savePhotoAnalysis, calculator, flagOnsite}, nil
 }
 
-func normalizeConfidenceLevel(level string) string {
-	switch level {
-	case "High", "HIGH", "high", "Hoog", "hoog":
-		return "High"
-	case "Low", "LOW", "low", "Laag", "laag":
-		return "Low"
-	default:
-		return "Medium"
-	}
-}
-
-func normalizeScopeAssessment(scope string) string {
-	// Normalize various AI responses to allowed values
-	switch scope {
-	case "Small", "SMALL", "small", "Klein", "klein", "Minor", "minor":
-		return "Small"
-	case "Medium", "MEDIUM", "medium", "Gemiddeld", "gemiddeld", "Moderate", "moderate":
-		return "Medium"
-	case "Large", "LARGE", "large", "Groot", "groot", "Major", "major", "Extensive", "extensive":
-		return "Large"
-	case "Unclear", "UNCLEAR", "unclear", "Onduidelijk", "onduidelijk", "Unknown", "unknown":
-		return "Unclear"
-	default:
-		// If not recognized, default to Unclear
-		return "Unclear"
-	}
-}
-
-func normalizeMeasurementType(t string) string {
-	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "dimension", "length", "width", "height", "depth", "lengte", "breedte", "hoogte":
-		return "dimension"
-	case "area", "oppervlakte", "m2":
-		return "area"
-	case "count", "aantal", "stuks", "quantity":
-		return "count"
-	case "volume", "inhoud", "m3":
-		return "volume"
-	default:
-		return "dimension"
-	}
-}
-
 func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, serviceType string, intakeRequirements string, preparedImages []PreparedImage) string {
 	preprocessingSection := ""
 	if preprocessingSummary := buildPreprocessingPromptSection(preparedImages); preprocessingSummary != "" {

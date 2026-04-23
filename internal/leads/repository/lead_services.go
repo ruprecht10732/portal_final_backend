@@ -82,7 +82,7 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromCreateRow(row), nil
 }
 
 func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (LeadService, error) {
@@ -93,7 +93,7 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organ
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromGetByIDRow(row), nil
 }
 
 func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error) {
@@ -104,7 +104,7 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, org
 
 	services := make([]LeadService, 0, len(rows))
 	for _, row := range rows {
-		services = append(services, leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}))
+		services = append(services, leadServiceFromListRow(row))
 	}
 	return services, nil
 }
@@ -121,12 +121,12 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 		if fallbackErr != nil {
 			return LeadService{}, fallbackErr
 		}
-		return leadServiceFromRow(leadServiceFields{ID: fallback.ID, LeadID: fallback.LeadID, OrganizationID: fallback.OrganizationID, ServiceType: fallback.ServiceType, Status: fallback.Status, PipelineStage: string(fallback.PipelineStage), ConsumerNote: fallback.ConsumerNote, Source: fallback.Source, CustomerPreferences: fallback.CustomerPreferences, GatekeeperNurturingLoopCount: fallback.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: fallback.GatekeeperNurturingLoopFingerprint, AgentCycleCount: fallback.AgentCycleCount, AgentCycleFingerprint: fallback.AgentCycleFingerprint, AgentCycleLastTransition: fallback.AgentCycleLastTransition, ExtraWorkAmountCents: fallback.ExtraWorkAmountCents, ExtraWorkNotes: fallback.ExtraWorkNotes, CreatedAt: fallback.CreatedAt, UpdatedAt: fallback.UpdatedAt}), nil
+		return leadServiceFromGetLatestRow(fallback), nil
 	}
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromGetCurrentRow(row), nil
 }
 
 func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error) {
@@ -137,7 +137,7 @@ func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromUpdateStatusAndStageRow(row), nil
 }
 
 // UpdateLeadServiceType updates the service type for a lead service using an active service type name/slug.
@@ -149,7 +149,7 @@ func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, or
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromUpdateTypeRow(row), nil
 }
 
 func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error) {
@@ -160,7 +160,7 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromUpdateStatusRow(row), nil
 }
 
 // CompleteLeadService moves a Fulfillment-stage service to Completed and optionally records extra work.
@@ -178,7 +178,7 @@ func (r *Repository) CompleteLeadService(ctx context.Context, id uuid.UUID, orga
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromCompleteRow(row), nil
 }
 
 func (r *Repository) SetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, count int, fingerprint string) error {
@@ -230,26 +230,16 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromUpdatePipelineRow(row), nil
 }
 
 // CloseAllActiveServices marks all non-terminal services for a lead as Completed/Completed.
+// Uses a single CTE query to avoid N+1 updates and ensure atomicity.
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
-	services, err := r.ListLeadServices(ctx, leadID, organizationID)
-	if err != nil {
-		return err
-	}
-
-	for _, svc := range services {
-		if domain.IsTerminal(svc.Status, svc.PipelineStage) {
-			continue
-		}
-		if _, err := r.UpdateServiceStatusAndPipelineStage(ctx, svc.ID, organizationID, domain.LeadStatusCompleted, domain.PipelineStageCompleted); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return r.queries.CloseAllActiveServices(ctx, leadsdb.CloseAllActiveServicesParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 }
 
 func (r *Repository) UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error {
@@ -304,4 +294,106 @@ func leadServiceFromRow(fields leadServiceFields) LeadService {
 		CreatedAt:                          fields.CreatedAt.Time,
 		UpdatedAt:                          fields.UpdatedAt.Time,
 	}
+}
+
+
+// Thin wrappers around leadServiceFromRow to keep call sites readable.
+func leadServiceFromCreateRow(row leadsdb.CreateLeadServiceRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromGetByIDRow(row leadsdb.GetLeadServiceByIDRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromListRow(row leadsdb.ListLeadServicesRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromGetCurrentRow(row leadsdb.GetCurrentActiveLeadServiceRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromGetLatestRow(row leadsdb.GetLatestLeadServiceRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromUpdateStatusAndStageRow(row leadsdb.UpdateServiceStatusAndPipelineStageRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromUpdateTypeRow(row leadsdb.UpdateLeadServiceTypeRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromUpdateStatusRow(row leadsdb.UpdateServiceStatusRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromCompleteRow(row leadsdb.CompleteLeadServiceRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func leadServiceFromUpdatePipelineRow(row leadsdb.UpdatePipelineStageRow) LeadService {
+	return leadServiceFromRow(leadServiceFields{
+		ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage),
+		ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences,
+		GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint,
+		AgentCycleCount: row.AgentCycleCount, AgentCycleFingerprint: row.AgentCycleFingerprint, AgentCycleLastTransition: row.AgentCycleLastTransition,
+		ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
 }

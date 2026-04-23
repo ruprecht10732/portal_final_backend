@@ -13,11 +13,6 @@ import (
 	leadsdb "portal_final_backend/internal/leads/db"
 )
 
-const aiAnalysisSelectColumns = `id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-		lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
-		preferred_contact_channel, suggested_contact_message, summary,
-		composite_confidence, confidence_breakdown, risk_flags, created_at`
-
 // AIAnalysis represents a single AI analysis for a lead service.
 type AIAnalysis struct {
 	ID                      uuid.UUID
@@ -62,11 +57,11 @@ type CreateAIAnalysisParams struct {
 
 // CreateAIAnalysis stores a new AI analysis for a lead service.
 func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error) {
-	missingInfoJSON := marshalJSONArray(params.MissingInformation)
-	resolvedInfoJSON := marshalJSONArray(params.ResolvedInformation)
-	extractedFactsJSON := marshalJSONStringMap(params.ExtractedFacts)
+	missingInfoJSON := marshalJSONSlice(params.MissingInformation)
+	resolvedInfoJSON := marshalJSONSlice(params.ResolvedInformation)
+	extractedFactsJSON := marshalJSONMap(params.ExtractedFacts)
 	breakdownJSON := marshalJSONMap(params.ConfidenceBreakdown)
-	riskFlagsJSON := marshalJSONArray(params.RiskFlags)
+	riskFlagsJSON := marshalJSONSlice(params.RiskFlags)
 
 	row, err := r.queries.CreateAIAnalysis(ctx, leadsdb.CreateAIAnalysisParams{
 		LeadID:                  toPgUUID(params.LeadID),
@@ -233,26 +228,4 @@ func (snapshot aiAnalysisSnapshot) toModel() AIAnalysis {
 	return analysis
 }
 
-func marshalJSONArray(values []string) []byte {
-	if values == nil {
-		values = []string{}
-	}
-	data, _ := json.Marshal(values)
-	return data
-}
 
-func marshalJSONMap(values map[string]float64) []byte {
-	if values == nil {
-		values = map[string]float64{}
-	}
-	data, _ := json.Marshal(values)
-	return data
-}
-
-func marshalJSONStringMap(values map[string]string) []byte {
-	if values == nil {
-		values = map[string]string{}
-	}
-	data, _ := json.Marshal(values)
-	return data
-}

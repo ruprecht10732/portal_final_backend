@@ -665,36 +665,6 @@ func buildUpdateLeadDetailsTool() (tool.Tool, error) {
 	})
 }
 
-func normalizeCallNoteBody(body string) string {
-	trimmed := strings.TrimSpace(body)
-	if trimmed == "" {
-		return ""
-	}
-
-	lines := strings.Split(trimmed, "\n")
-	cleaned := make([]string, 0, len(lines))
-	lastBlank := false
-	for _, line := range lines {
-		plain := strings.TrimSpace(line)
-		lower := strings.ToLower(plain)
-		if strings.Contains(lower, "originele input") {
-			continue
-		}
-		if plain == "" {
-			if lastBlank {
-				continue
-			}
-			lastBlank = true
-			cleaned = append(cleaned, "")
-			continue
-		}
-		lastBlank = false
-		cleaned = append(cleaned, strings.TrimRight(line, " \t"))
-	}
-
-	return strings.TrimSpace(strings.Join(cleaned, "\n"))
-}
-
 func applyLeadUpdateString(fieldName string, value *string, target **string, updatedFields *[]string) {
 	if value == nil {
 		return

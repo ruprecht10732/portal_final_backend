@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -257,25 +256,4 @@ func deriveIntakeReadiness(analysis repository.AIAnalysis) (bool, bool) {
 	return intakeReady, lowConfidence
 }
 
-func normalizeCouncilConsensusMode(mode string) string {
-	normalized := strings.ToLower(strings.TrimSpace(mode))
-	switch normalized {
-	case "weighted", "majority", "estimator_final":
-		return normalized
-	default:
-		return "weighted"
-	}
-}
 
-func normalizeCouncilEvaluation(in CouncilEvaluation) CouncilEvaluation {
-	if strings.TrimSpace(in.Decision) == "" {
-		in.Decision = CouncilDecisionAllow
-	}
-	if strings.TrimSpace(in.ReasonCode) == "" {
-		in.ReasonCode = "council_allow"
-	}
-	if strings.TrimSpace(in.Summary) == "" {
-		in.Summary = "Council akkoord."
-	}
-	return in
-}

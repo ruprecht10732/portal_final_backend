@@ -68,11 +68,6 @@ func (h *PhotoAnalysisHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/photo-analysis/history", h.ListPhotoAnalyses)
 }
 
-// PhotoAnalysisRequest represents the request to analyze photos.
-type PhotoAnalysisRequest struct {
-	Context string `json:"context"` // Optional context about the issue
-}
-
 const (
 	errTenantContextRequired = "tenant context required"
 	errInvalidServiceID      = "invalid service id"
@@ -192,7 +187,7 @@ func (h *PhotoAnalysisHandler) parseLeadServiceIDs(c *gin.Context) (uuid.UUID, u
 }
 
 func parsePhotoAnalysisContext(c *gin.Context) string {
-	var req PhotoAnalysisRequest
+	var req transport.PhotoAnalysisRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return ""
 	}

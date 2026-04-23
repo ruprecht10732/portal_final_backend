@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
@@ -13,6 +14,7 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/maintenance"
 	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
@@ -28,7 +30,7 @@ import (
 // Uses focused services following vertical slicing pattern.
 type Handler struct {
 	mgmt            *management.Service
-	notesHandler    *NotesHandler
+	notesSvc        *notes.Service
 	gatekeeper      *agent.Gatekeeper
 	callLogger      *agent.CallLogger
 	sse             *sse.Service
@@ -44,7 +46,7 @@ type Handler struct {
 // HandlerDeps bundles dependencies for Handler construction.
 type HandlerDeps struct {
 	Mgmt            *management.Service
-	NotesHandler    *NotesHandler
+	NotesSvc        *notes.Service
 	Gatekeeper      *agent.Gatekeeper
 	CallLogger      *agent.CallLogger
 	SSE             *sse.Service
@@ -67,7 +69,7 @@ const (
 func New(deps HandlerDeps) *Handler {
 	return &Handler{
 		mgmt:            deps.Mgmt,
-		notesHandler:    deps.NotesHandler,
+		notesSvc:        deps.NotesSvc,
 		gatekeeper:      deps.Gatekeeper,
 		callLogger:      deps.CallLogger,
 		sse:             deps.SSE,
@@ -121,8 +123,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PUT(":id/assign", h.Assign)
 	rg.POST("/:id/view", h.MarkViewed)
-	rg.GET("/:id/notes", h.notesHandler.ListNotes)
-	rg.POST("/:id/notes", h.notesHandler.AddNote)
+	rg.GET("/:id/notes", h.ListNotes)
+	rg.POST("/:id/notes", h.AddNote)
 	// Service-specific routes
 	rg.POST("/:id/services", h.AddService)
 	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
@@ -236,6 +238,10 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 	var req transport.LeadHeatmapRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
@@ -528,6 +534,15 @@ func (h *Handler) SendTimelineWhatsApp(c *gin.Context) {
 }
 
 func (h *Handler) Update(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -541,15 +556,6 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := httpkit.RequireTenant(c)
-	if !ok {
 		return
 	}
 
@@ -573,6 +579,15 @@ func (h *Handler) Update(c *gin.Context) {
 }
 
 func (h *Handler) Assign(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -584,13 +599,8 @@ func (h *Handler) Assign(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := httpkit.RequireTenant(c)
-	if !ok {
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
@@ -777,6 +787,10 @@ func (h *Handler) List(c *gin.Context) {
 	var req transport.ListLeadsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
@@ -1577,10 +1591,7 @@ func (h *Handler) GetAgentApproval(c *gin.Context) {
 	httpkit.OK(c, approval)
 }
 
-// approveRejectRequest is the body for approve/reject actions.
-type approveRejectRequest struct {
-	Reason string `json:"reason"`
-}
+
 
 // ApproveAgentApproval approves a pending agent tool execution.
 func (h *Handler) ApproveAgentApproval(c *gin.Context) {
@@ -1599,10 +1610,10 @@ func (h *Handler) ApproveAgentApproval(c *gin.Context) {
 		return
 	}
 
-	var req approveRejectRequest
+	var req transport.AgentApprovalDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// empty body is fine
-		req = approveRejectRequest{}
+		req = transport.AgentApprovalDecisionRequest{}
 	}
 
 	err = h.repo.UpdateAgentApprovalDecision(c.Request.Context(), repository.UpdateAgentApprovalDecisionParams{
@@ -1636,9 +1647,9 @@ func (h *Handler) RejectAgentApproval(c *gin.Context) {
 		return
 	}
 
-	var req approveRejectRequest
+	var req transport.AgentApprovalDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		req = approveRejectRequest{}
+		req = transport.AgentApprovalDecisionRequest{}
 	}
 
 	err = h.repo.UpdateAgentApprovalDecision(c.Request.Context(), repository.UpdateAgentApprovalDecisionParams{
@@ -1653,4 +1664,125 @@ func (h *Handler) RejectAgentApproval(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"status": "rejected"})
+}
+
+
+// ListNotes returns all notes for a lead.
+func (h *Handler) ListNotes(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	notesList, err := h.notesSvc.List(c.Request.Context(), id, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, notesList)
+}
+
+// AddNote creates a new note for a lead and records a timeline event.
+func (h *Handler) AddNote(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CreateLeadNoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	created, err := h.notesSvc.Add(c.Request.Context(), id, identity.UserID(), tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	var serviceID uuid.UUID
+	var hasServiceID bool
+	if req.ServiceID != nil && *req.ServiceID != "" {
+		if parsed, parseErr := uuid.Parse(*req.ServiceID); parseErr == nil {
+			serviceID = parsed
+			hasServiceID = true
+		}
+	}
+	if !hasServiceID {
+		serviceID, hasServiceID = h.getCurrentServiceID(c, id, tenantID)
+	}
+
+	var serviceIDPtr *uuid.UUID
+	if hasServiceID {
+		serviceIDPtr = &serviceID
+	}
+	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+		LeadID:         id,
+		ServiceID:      serviceIDPtr,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeUser,
+		ActorName:      created.AuthorEmail,
+		EventType:      repository.EventTypeNote,
+		Title:          repository.EventTitleNoteAdded,
+		Summary:        toSummaryPointer(created.Body, repository.TimelineSummaryMaxLen),
+		Metadata: repository.NoteMetadata{
+			NoteID:   created.ID,
+			NoteType: created.Type,
+		}.ToMap(),
+	})
+
+	if hasServiceID {
+		h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        id,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			Source:        "note",
+		})
+	}
+
+	httpkit.JSON(c, http.StatusCreated, created)
+}
+
+func (h *Handler) getCurrentServiceID(c *gin.Context, leadID, tenantID uuid.UUID) (uuid.UUID, bool) {
+	svc, err := h.repo.GetCurrentLeadService(c.Request.Context(), leadID, tenantID)
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+	return svc.ID, true
+}
+
+func toSummaryPointer(text string, maxLen int) *string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > maxLen {
+		trimmed = trimmed[:maxLen] + "..."
+	}
+	return &trimmed
 }

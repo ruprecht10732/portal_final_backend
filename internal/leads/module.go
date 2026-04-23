@@ -614,13 +614,7 @@ func hasImageAttachments(items []repository.Attachment) bool {
 }
 
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
-	agentCoordinator := newAgentCoordinator(orchestrator)
-	stateReconciler := newStateReconciler(orchestrator)
-	pipelineManager := newPipelineManager(orchestrator)
-
-	subscribeAgentCoordinator(eventBus, agentCoordinator)
-	subscribeStateReconciler(eventBus, stateReconciler)
-	subscribePipelineManager(eventBus, pipelineManager)
+	subscribeOrchestratorEvents(eventBus, orchestrator)
 }
 
 func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
@@ -734,13 +728,12 @@ type buildHandlersDeps struct {
 }
 
 func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
-	notesHandler := handler.NewNotesHandler(deps.NotesSvc, deps.Repo, deps.EventBus, deps.Validator)
 	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.EventBus, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
 	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator, deps.EventBus)
 	photoAnalysisHandler.SetPhotoAnalysisScheduler(deps.PhotoAnalysisQueue)
 	h := handler.New(handler.HandlerDeps{
 		Mgmt:            deps.MgmtSvc,
-		NotesHandler:    notesHandler,
+		NotesSvc:        deps.NotesSvc,
 		Gatekeeper:      deps.Gatekeeper,
 		CallLogger:      deps.CallLogger,
 		SSE:             deps.SSEService,

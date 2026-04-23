@@ -68,107 +68,6 @@ const (
 	agentCycleDetectedSummary     = "Systeem: Service pingpongt tussen Gatekeeper en Estimator. Menselijke controle vereist."
 )
 
-// normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
-func normalizeUrgencyLevel(level string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(level))
-
-	switch normalized {
-	case "high", "hoog", "urgent", "spoed", "spoedeisend", "critical":
-		return "High", nil
-	case "medium", "mid", "moderate", "matig", "gemiddeld", "normal", "standard", "standaard":
-		return "Medium", nil
-	case "low", "laag", "non-urgent", "niet-urgent", "minor":
-		return "Low", nil
-	default:
-		// If unrecognized, default to Medium but log it
-		log.Printf("Unrecognized urgency level '%s', defaulting to Medium", level)
-		return "Medium", nil
-	}
-}
-
-// normalizeLeadQuality converts various lead quality formats to the required values: Junk, Low, Potential, High, Urgent
-func normalizeLeadQuality(quality string) string {
-	normalized := strings.ToLower(strings.TrimSpace(quality))
-
-	switch normalized {
-	case "junk", "spam", "rommel", "onzin", "fake":
-		return "Junk"
-	case "low", "laag":
-		return "Low"
-	case "potential", "potentieel", "medium", "gemiddeld", "moderate", "mid",
-		"onbekend", "unknown", "niet bekend", "nvt", "n/a", "n.v.t.", "onbepaald":
-		return "Potential"
-	case "high", "hoog", "good", "goed", "qualified", "gekwalificeerd":
-		return "High"
-	case "urgent", "spoed", "critical", "kritiek":
-		return "Urgent"
-	default:
-		log.Printf("Unrecognized lead quality '%s', defaulting to Potential", quality)
-		return "Potential"
-	}
-}
-
-// normalizeRecommendedAction converts various action formats to valid values: Reject, RequestInfo, ScheduleSurvey, CallImmediately.
-// Estimation-ready aliases map to ScheduleSurvey because that is the existing
-// canonical non-RequestInfo action stored in the analysis table.
-func normalizeRecommendedAction(action string) string {
-	normalized := strings.ToLower(strings.TrimSpace(action))
-
-	// Check for exact matches first
-	switch normalized {
-	case "reject", "afwijzen", "weigeren":
-		return "Reject"
-	case "requestinfo", "request_info", "request info":
-		return "RequestInfo"
-	case "movetoestimation", "move_to_estimation", "move to estimation",
-		"proceedtoestimation", "proceed_to_estimation", "proceed to estimation",
-		"estimate", "estimateready", "estimate_ready", "estimate ready":
-		return "ScheduleSurvey"
-	case "schedulesurvey", "schedule_survey", "schedule survey", "survey", "opname", "inmeten":
-		return "ScheduleSurvey"
-	case "callimmediately", "call_immediately", "call immediately", "call", "bellen":
-		return "CallImmediately"
-	}
-
-	// Check for partial matches (LLM often sends descriptive text)
-	if strings.Contains(normalized, "reject") || strings.Contains(normalized, "spam") || strings.Contains(normalized, "junk") {
-		return "Reject"
-	}
-	if strings.Contains(normalized, "call") || strings.Contains(normalized, "bel") || strings.Contains(normalized, "phone") {
-		return "CallImmediately"
-	}
-	if strings.Contains(normalized, "estimat") || strings.Contains(normalized, "proceed") || strings.Contains(normalized, "move to estimation") {
-		return "ScheduleSurvey"
-	}
-	if strings.Contains(normalized, "survey") || strings.Contains(normalized, "opname") || strings.Contains(normalized, "inmeten") || strings.Contains(normalized, "schedule") {
-		return "ScheduleSurvey"
-	}
-	// Default: anything about info, contact, nurture, clarification → RequestInfo
-	if strings.Contains(normalized, "info") || strings.Contains(normalized, "contact") ||
-		strings.Contains(normalized, "nurtur") || strings.Contains(normalized, "clarif") ||
-		strings.Contains(normalized, "request") || strings.Contains(normalized, "more") ||
-		strings.Contains(normalized, "review") {
-		return "RequestInfo"
-	}
-
-	log.Printf("Unrecognized recommended action '%s', defaulting to RequestInfo", action)
-	return "RequestInfo"
-}
-
-func normalizeConsumerRole(role string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(role))
-	switch normalized {
-	case "owner":
-		return "Owner", nil
-	case "tenant":
-		return "Tenant", nil
-	case "landlord":
-		return "Landlord", nil
-	default:
-		return "", fmt.Errorf("invalid consumer role")
-	}
-}
-
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
 	Repo                        repository.LeadsRepository
@@ -874,32 +773,6 @@ func getLeadContext(deps *ToolDependencies) (uuid.UUID, uuid.UUID, error) {
 	return leadID, serviceID, nil
 }
 
-func normalizeContactChannel(channel string) (string, error) {
-	clean := strings.TrimSpace(channel)
-	normalized := strings.ToLower(clean)
-
-	// WhatsApp variations
-	if strings.Contains(normalized, "whatsapp") || normalized == "wa" {
-		return "WhatsApp", nil
-	}
-
-	// Email variations
-	if strings.Contains(normalized, "email") || strings.Contains(normalized, "e-mail") || normalized == "mail" {
-		return "Email", nil
-	}
-
-	// Phone/call variations - map to WhatsApp since it's our phone-based channel
-	if strings.Contains(normalized, "phone") || strings.Contains(normalized, "telefoon") ||
-		strings.Contains(normalized, "call") || strings.Contains(normalized, "bel") ||
-		normalized == "tel" || normalized == "sms" {
-		return "WhatsApp", nil
-	}
-
-	// If unrecognized, default to Email and log
-	log.Printf("Unrecognized contact channel '%s', defaulting to Email", channel)
-	return "Email", nil
-}
-
 func resolvePreferredChannel(inputChannel string, lead repository.Lead) (string, error) {
 	_, err := normalizeContactChannel(inputChannel)
 	if err != nil {
@@ -909,67 +782,6 @@ func resolvePreferredChannel(inputChannel string, lead repository.Lead) (string,
 		return "WhatsApp", nil
 	}
 	return "Email", nil
-}
-
-func normalizeMissingInformation(items []string) []string {
-	normalized := make([]string, 0, len(items))
-	for _, item := range items {
-		trimmed := strings.TrimSpace(item)
-		if trimmed == "" {
-			continue
-		}
-		normalized = append(normalized, trimmed)
-	}
-	sort.Strings(normalized)
-	return normalized
-}
-
-func normalizeExtractedFacts(facts map[string]string) map[string]string {
-	if len(facts) == 0 {
-		return map[string]string{}
-	}
-	normalized := make(map[string]string, len(facts))
-	for key, value := range facts {
-		trimmedKey := strings.TrimSpace(key)
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedKey == "" || trimmedValue == "" {
-			continue
-		}
-		normalized[trimmedKey] = trimmedValue
-	}
-	if len(normalized) == 0 {
-		return map[string]string{}
-	}
-	return normalized
-}
-
-// contactMessageReplacer is compiled once and reused for all contact message normalisations.
-var contactMessageReplacer = strings.NewReplacer(
-	"\r\n", "\n",
-	"\\n", "\n",
-	"\\t", " ",
-	"\r", "",
-	"nodie", "nodig",
-	"nodien", "nodig",
-)
-
-func normalizeSuggestedContactMessage(message string) string {
-	if strings.TrimSpace(message) == "" {
-		return ""
-	}
-
-	normalized := contactMessageReplacer.Replace(message)
-
-	lines := strings.Split(normalized, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = strings.Join(strings.Fields(line), " ")
-	}
-	normalized = strings.Join(lines, "\n")
-	return strings.TrimSpace(normalized)
 }
 
 func isEquivalentRecentAnalysis(current repository.AIAnalysis, candidate normalizedAnalysisInput) bool {
@@ -2173,24 +1985,6 @@ func resolveGatekeeperLoopFingerprint(ctx context.Context, deps *ToolDependencie
 	}
 
 	return "", nil
-}
-
-func normalizeGatekeeperLoopItems(values []string) []string {
-	set := make(map[string]struct{}, len(values))
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.ToLower(strings.TrimSpace(value))
-		if trimmed == "" {
-			continue
-		}
-		if _, exists := set[trimmed]; exists {
-			continue
-		}
-		set[trimmed] = struct{}{}
-		normalized = append(normalized, trimmed)
-	}
-	sort.Strings(normalized)
-	return normalized
 }
 
 // --- Cross-agent cycle detection ---

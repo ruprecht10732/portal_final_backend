@@ -77,18 +77,18 @@ func (r *Repository) CreatePhotoAnalysis(ctx context.Context, params CreatePhoto
 		ServiceID:              toPgUUID(params.ServiceID),
 		OrgID:                  toPgUUID(params.OrganizationID),
 		Summary:                params.Summary,
-		Observations:           marshalJSONStrings(params.Observations),
+		Observations:           marshalJSONSlice(params.Observations),
 		ScopeAssessment:        params.ScopeAssessment,
 		CostIndicators:         toPgTextValue(params.CostIndicators),
-		SafetyConcerns:         marshalJSONStrings(params.SafetyConcerns),
-		AdditionalInfo:         marshalJSONStrings(params.AdditionalInfo),
+		SafetyConcerns:         marshalJSONSlice(params.SafetyConcerns),
+		AdditionalInfo:         marshalJSONSlice(params.AdditionalInfo),
 		ConfidenceLevel:        params.ConfidenceLevel,
 		PhotoCount:             int32(params.PhotoCount),
-		Measurements:           marshalJSONMeasurements(params.Measurements),
-		NeedsOnsiteMeasurement: marshalJSONStrings(params.NeedsOnsiteMeasurement),
-		Discrepancies:          marshalJSONStrings(params.Discrepancies),
-		ExtractedText:          marshalJSONStrings(params.ExtractedText),
-		SuggestedSearchTerms:   marshalJSONStrings(params.SuggestedSearchTerms),
+		Measurements:           marshalJSONSlice(params.Measurements),
+		NeedsOnsiteMeasurement: marshalJSONSlice(params.NeedsOnsiteMeasurement),
+		Discrepancies:          marshalJSONSlice(params.Discrepancies),
+		ExtractedText:          marshalJSONSlice(params.ExtractedText),
+		SuggestedSearchTerms:   marshalJSONSlice(params.SuggestedSearchTerms),
 		IsRelevant:             toPgBoolPtr(params.IsRelevant),
 	})
 	if err != nil {
@@ -307,18 +307,4 @@ func (snapshot photoAnalysisSnapshot) toModel() PhotoAnalysis {
 	return analysis
 }
 
-func marshalJSONStrings(values []string) []byte {
-	if values == nil {
-		values = []string{}
-	}
-	data, _ := json.Marshal(values)
-	return data
-}
 
-func marshalJSONMeasurements(values []Measurement) []byte {
-	if values == nil {
-		values = []Measurement{}
-	}
-	data, _ := json.Marshal(values)
-	return data
-}

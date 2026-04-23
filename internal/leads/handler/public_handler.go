@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
@@ -85,24 +84,7 @@ func (h *PublicHandler) resolveLeadID(token string) (uuid.UUID, error) {
 	return lead.ID, nil
 }
 
-type PublicPreferencesRequest struct {
-	Budget       string `json:"budget" validate:"omitempty,max=200"`
-	Timeframe    string `json:"timeframe" validate:"omitempty,max=200"`
-	Availability string `json:"availability" validate:"omitempty,max=2000"`
-	ExtraNotes   string `json:"extraNotes" validate:"omitempty,max=2000"`
-}
 
-type PublicAvailabilitySlotsQuery struct {
-	StartDate    string `form:"startDate" validate:"required"`
-	EndDate      string `form:"endDate" validate:"required"`
-	SlotDuration int    `form:"slotDuration"`
-}
-
-type PublicAppointmentRequest struct {
-	UserID    uuid.UUID `json:"userId" validate:"required"`
-	StartTime time.Time `json:"startTime" validate:"required"`
-	EndTime   time.Time `json:"endTime" validate:"required,gtfield=StartTime"`
-}
 
 // GetTrackAndTrace returns the public portal data for a lead based on a token.
 func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
@@ -179,7 +161,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 // UpdatePreferences stores lead preferences and triggers AI refresh.
 func (h *PublicHandler) UpdatePreferences(c *gin.Context) {
 	token := c.Param("token")
-	var req PublicPreferencesRequest
+	var req transport.PublicPreferencesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidInput, nil)
 		return
@@ -296,7 +278,7 @@ func (h *PublicHandler) AddCustomerInfo(c *gin.Context) {
 // GetAvailabilitySlots returns available inspection slots for the organization.
 func (h *PublicHandler) GetAvailabilitySlots(c *gin.Context) {
 	token := c.Param("token")
-	var req PublicAvailabilitySlotsQuery
+	var req transport.PublicAvailabilitySlotsQuery
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidRequest, nil)
 		return
@@ -332,7 +314,7 @@ func (h *PublicHandler) GetAvailabilitySlots(c *gin.Context) {
 // RequestAppointment creates a requested inspection appointment for the lead.
 func (h *PublicHandler) RequestAppointment(c *gin.Context) {
 	token := c.Param("token")
-	var req PublicAppointmentRequest
+	var req transport.PublicAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidInput, nil)
 		return

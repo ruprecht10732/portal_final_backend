@@ -153,15 +153,6 @@ type PhotoAnalysisStore interface {
 	ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error)
 }
 
-// LeadAppointmentStats holds appointment statistics for scoring.
-type LeadAppointmentStats struct {
-	Total       int
-	Scheduled   int
-	Completed   int
-	Cancelled   int
-	HasUpcoming bool
-}
-
 // AppointmentStatsReader provides appointment stats for RAC_leads (for scoring).
 type AppointmentStatsReader interface {
 	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)

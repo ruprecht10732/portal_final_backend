@@ -86,35 +86,6 @@ func NewBasicImagePreprocessor() *BasicImagePreprocessor {
 	return &BasicImagePreprocessor{tesseractPath: tesseractPath}
 }
 
-func normalizeServiceTypeKey(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func normalizePhotoPreprocessingSettings(settings PhotoPreprocessingSettings) PhotoPreprocessingSettings {
-	settings.OCRAssistServiceTypes = normalizeServiceTypeList(settings.OCRAssistServiceTypes)
-	settings.LensCorrectionServiceTypes = normalizeServiceTypeList(settings.LensCorrectionServiceTypes)
-	settings.PerspectiveNormalizationServiceTypes = normalizeServiceTypeList(settings.PerspectiveNormalizationServiceTypes)
-	return settings
-}
-
-func normalizeServiceTypeList(values []string) []string {
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		key := normalizeServiceTypeKey(trimmed)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		normalized = append(normalized, trimmed)
-	}
-	return normalized
-}
-
 func (p *BasicImagePreprocessor) Prepare(ctx context.Context, settings PhotoPreprocessingSettings, serviceType string, images []ImageData) ([]PreparedImage, error) {
 	settings = normalizePhotoPreprocessingSettings(settings)
 	prepared := make([]PreparedImage, 0, len(images))
