@@ -3,8 +3,10 @@ package whatsappagent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -565,5 +567,97 @@ func TestServiceRunAgentReplyPassesLeadHintToPreparedRunner(t *testing.T) {
 
 	if replyRunner.leadHint == nil || replyRunner.leadHint.LeadID != testHintLeadID {
 		t.Fatalf("expected lead hint to reach prepared runner, got %#v", replyRunner.leadHint)
+	}
+}
+
+
+func TestServiceRunAgentReplySkipsResetConfirmation(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceWrapperTestQueries{recent: []whatsappagentdb.GetRecentAgentMessagesRow{
+		{Role: "assistant", Content: msgConversationReset},
+		{Role: "user", Content: "Hoi"},
+	}}
+	replyRunner := &serviceWrapperTestReplyRunner{result: AgentRunResult{Reply: "Hoi!"}}
+	service := &Service{
+		queries:     queries,
+		replyRunner: replyRunner,
+		sender:      newTestSender(&senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}, senderTestConfigReader{}, nil),
+		log:         logger.New("development"),
+	}
+	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-after-reset", PhoneNumber: serviceWrapperTestPhone, Body: "Hoi"}
+
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(serviceWrapperTestPhone), serviceWrapperTestPhone, inbound, nil, "default")
+
+	// Should have 1 message: only the user message because the reset confirmation is filtered.
+	if len(replyRunner.messages) != 1 {
+		t.Fatalf("expected 1 message (reset confirmation filtered + inbound already in DB), got %d: %#v", len(replyRunner.messages), replyRunner.messages)
+	}
+	if replyRunner.messages[0].Content != "Hoi" {
+		t.Fatalf("expected only user message, got %#v", replyRunner.messages[0])
+	}
+}
+
+type serializingTestReplyRunner struct {
+	mu                sync.Mutex
+	callCount         int
+	maxConcurrent     int
+	currentConcurrent int
+	result            AgentRunResult
+}
+
+func (r *serializingTestReplyRunner) RunPreparedDefaultAgent(_ context.Context, _ uuid.UUID, _ string, _ []ConversationMessage, _ *engine.ConversationLeadHint, _ *engine.CurrentInboundMessage) (AgentRunResult, error) {
+	r.mu.Lock()
+	r.callCount++
+	r.currentConcurrent++
+	if r.currentConcurrent > r.maxConcurrent {
+		r.maxConcurrent = r.currentConcurrent
+	}
+	r.mu.Unlock()
+
+	time.Sleep(50 * time.Millisecond)
+
+	r.mu.Lock()
+	r.currentConcurrent--
+	r.mu.Unlock()
+	return r.result, nil
+}
+
+func (r *serializingTestReplyRunner) RunPreparedPartnerAgent(_ context.Context, _ uuid.UUID, _ string, _ []ConversationMessage, _ *engine.ConversationLeadHint, _ *engine.CurrentInboundMessage, _ uuid.UUID) (AgentRunResult, error) {
+	return r.result, nil
+}
+
+func TestServiceRunAgentReplySerializesPerPhone(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	phoneKey := normalizeAgentPhoneKey(serviceWrapperTestPhone)
+
+	slowRunner := &serializingTestReplyRunner{result: AgentRunResult{Reply: "Ok"}}
+
+	service := &Service{
+		queries:     &serviceWrapperTestQueries{},
+		replyRunner: slowRunner,
+		sender:      newTestSender(&senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}, senderTestConfigReader{}, nil),
+		log:         logger.New("development"),
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			inbound := &CurrentInboundMessage{ExternalMessageID: fmt.Sprintf("msg-%d", idx), PhoneNumber: serviceWrapperTestPhone, Body: fmt.Sprintf("bericht %d", idx)}
+			service.runAgentReply(context.Background(), orgID, phoneKey, serviceWrapperTestPhone, inbound, nil, "default")
+		}(i)
+	}
+	wg.Wait()
+
+	if slowRunner.maxConcurrent > 1 {
+		t.Fatalf("expected agent runs to be serialized (max concurrent = 1), got max concurrent = %d", slowRunner.maxConcurrent)
+	}
+	if slowRunner.callCount != 5 {
+		t.Fatalf("expected 5 agent runs, got %d", slowRunner.callCount)
 	}
 }

@@ -19,7 +19,7 @@ SELECT id, organization_id, phone_number, role, content, external_message_id, me
 FROM RAC_whatsapp_agent_messages
 WHERE organization_id = $1
     AND phone_number = $2
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $3;
 
 -- name: GetRecentInboundAgentMessages :many
@@ -28,7 +28,7 @@ FROM RAC_whatsapp_agent_messages
 WHERE organization_id = $1
     AND phone_number = $2
     AND role = 'user'
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT $3;
 
 -- name: GetAgentMessageByExternalID :one

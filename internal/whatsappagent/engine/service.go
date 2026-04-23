@@ -356,7 +356,7 @@ func shouldResetConversation(message string) bool {
 func shouldSkipReplayedMessage(role, content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if role == "assistant" {
-		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable || trimmed == msgGroundingFallback {
+		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable || trimmed == msgGroundingFallback || trimmed == msgConversationReset {
 			return true
 		}
 		lower := strings.ToLower(trimmed)

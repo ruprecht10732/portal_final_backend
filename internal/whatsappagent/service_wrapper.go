@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"portal_final_backend/internal/scheduler"
@@ -77,6 +78,9 @@ type Service struct {
 	debouncer              *engine.MessageDebouncer
 	leadHintStore          LeadHintStore
 	log                    *logger.Logger
+
+	conversationMu    sync.Mutex
+	conversationLocks map[string]*sync.Mutex
 }
 
 func newService(pool *pgxpool.Pool, deps ModuleDependencies, inner *engine.Service) *Service {
@@ -675,7 +679,28 @@ func (s *Service) updateInboundInboxMessage(ctx context.Context, orgID uuid.UUID
 	return s.inboxSync.UpdateIncomingWhatsAppMessage(ctx, orgID, externalMessageID, body, metadata)
 }
 
+func (s *Service) getConversationLock(phoneKey string) *sync.Mutex {
+	s.conversationMu.Lock()
+	defer s.conversationMu.Unlock()
+	if s.conversationLocks == nil {
+		s.conversationLocks = make(map[string]*sync.Mutex)
+	}
+	lock, ok := s.conversationLocks[phoneKey]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.conversationLocks[phoneKey] = lock
+	}
+	return lock
+}
+
 func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound *CurrentInboundMessage, partnerID *uuid.UUID, reason string) {
+	// Serialize agent runs per phone number so that only one reply is generated
+	// at a time for a given conversation. This prevents race conditions where a
+	// slow earlier run finishes after a newer run and sends a stale reply.
+	lock := s.getConversationLock(phoneKey)
+	lock.Lock()
+	defer lock.Unlock()
+
 	recent, err := s.queries.GetRecentAgentMessages(ctx, whatsappagentdb.GetRecentAgentMessagesParams{
 		OrganizationID: pgtypeUUID(orgID),
 		PhoneNumber:    phoneKey,
@@ -779,7 +804,7 @@ func partnerIDFromAgentUser(user whatsappagentdb.GetAgentUserByPhoneRow) (uuid.U
 func shouldSkipReplayedMessage(role, content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if role == "assistant" {
-		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable || trimmed == msgGroundingFallback {
+		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable || trimmed == msgGroundingFallback || trimmed == msgConversationReset {
 			return true
 		}
 		lower := strings.ToLower(trimmed)
