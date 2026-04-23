@@ -206,16 +206,14 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
 	}
+
 	if payload.IsFromMe {
 		h.handleOutgoingWhatsAppMessage(c, orgID, request, payload)
 		return
 	}
 
-	messageAddress := strings.TrimSpace(payload.From)
-	if messageAddress == "" {
-		messageAddress = strings.TrimSpace(payload.ChatID)
-	}
-	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
+	messageAddress, ok := getValidDirectAddress(payload.From, payload.ChatID, payload.ChatID)
+	if !ok {
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
 		return
 	}
@@ -259,16 +257,14 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
 	}
+
 	if payload.IsFromMe {
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "outgoing message on agent device"})
 		return
 	}
 
-	messageAddress := strings.TrimSpace(payload.From)
-	if messageAddress == "" {
-		messageAddress = strings.TrimSpace(payload.ChatID)
-	}
-	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
+	messageAddress, ok := getValidDirectAddress(payload.From, payload.ChatID, payload.ChatID)
+	if !ok {
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
 		return
 	}
@@ -300,11 +296,8 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 }
 
 func (h *Handler) handleOutgoingWhatsAppMessage(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope, payload whatsAppWebhookPayload) {
-	messageAddress := strings.TrimSpace(payload.ChatID)
-	if messageAddress == "" {
-		messageAddress = strings.TrimSpace(payload.From)
-	}
-	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
+	messageAddress, ok := getValidDirectAddress(payload.ChatID, payload.From, payload.ChatID)
+	if !ok {
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
 		return
 	}
@@ -345,6 +338,7 @@ func (h *Handler) handleWhatsAppReceipt(c *gin.Context, orgID uuid.UUID, request
 		httpkit.Error(c, http.StatusBadRequest, "invalid receipt payload", err.Error())
 		return
 	}
+
 	receiptType, ok := normalizeWhatsAppReceiptType(payload.ReceiptType)
 	messageIDs := payload.messageIDs()
 	if !ok || len(messageIDs) == 0 {
@@ -364,37 +358,43 @@ func (h *Handler) handleWhatsAppReceipt(c *gin.Context, orgID uuid.UUID, request
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
 }
 
-func (p whatsAppAckPayload) messageIDs() []string {
-	values := make([]string, 0, len(p.IDs)+2)
-	values = append(values, p.IDs...)
-	if trimmed := strings.TrimSpace(p.ID); trimmed != "" {
-		values = append(values, trimmed)
+// Helpers for unified address resolution
+
+func getValidDirectAddress(preferred, fallback, chatID string) (string, bool) {
+	address := strings.TrimSpace(preferred)
+	if address == "" {
+		address = strings.TrimSpace(fallback)
 	}
-	if trimmed := strings.TrimSpace(p.MessageID); trimmed != "" {
-		values = append(values, trimmed)
+	if isNonDirectWhatsAppAddress(address) || isNonDirectWhatsAppAddress(chatID) {
+		return "", false
+	}
+	return address, true
+}
+
+func (p whatsAppAckPayload) messageIDs() []string {
+	seen := make(map[string]struct{})
+	var result []string
+
+	add := func(id string) {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			if _, exists := seen[trimmed]; !exists {
+				seen[trimmed] = struct{}{}
+				result = append(result, trimmed)
+			}
+		}
 	}
 
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		if _, exists := seen[trimmed]; exists {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		result = append(result, trimmed)
+	for _, id := range p.IDs {
+		add(id)
 	}
+	add(p.ID)
+	add(p.MessageID)
 
 	return result
 }
 
 func normalizeWhatsAppReceiptType(value string) (string, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	normalized = strings.ReplaceAll(normalized, "-", "_")
-
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(value)), "-", "_")
 	switch normalized {
 	case "delivered":
 		return "delivered", true
@@ -556,11 +556,9 @@ func buildDeletedMutation(orgID uuid.UUID, request WhatsAppWebhookEnvelope, meta
 
 func resolveDirectWhatsAppAddress(values ...string) string {
 	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || isNonDirectWhatsAppAddress(trimmed) {
-			continue
+		if trimmed := strings.TrimSpace(value); trimmed != "" && !isNonDirectWhatsAppAddress(trimmed) {
+			return trimmed
 		}
-		return trimmed
 	}
 	return ""
 }
@@ -571,14 +569,11 @@ func boolPointer(value bool) *bool {
 
 func parseWhatsAppWebhookTimestamp(values ...string) *time.Time {
 	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339, trimmed)
-		if err == nil {
-			utc := parsed.UTC()
-			return &utc
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
+				utc := parsed.UTC()
+				return &utc
+			}
 		}
 	}
 	return nil
@@ -586,18 +581,14 @@ func parseWhatsAppWebhookTimestamp(values ...string) *time.Time {
 
 func isNonDirectWhatsAppAddress(value string) bool {
 	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return false
-	}
-	return strings.Contains(trimmed, "@g.us") || strings.Contains(trimmed, "@newsletter") || strings.Contains(trimmed, "status@broadcast")
+	return trimmed != "" && (strings.Contains(trimmed, "@g.us") || strings.Contains(trimmed, "@newsletter") || strings.Contains(trimmed, "status@broadcast"))
 }
 
 func optionalTrimmedString(value string) *string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return &trimmed
 	}
-	return &trimmed
+	return nil
 }
 
 func buildWhatsAppWebhookMessageData(request WhatsAppWebhookEnvelope, fallbackBody string) (string, json.RawMessage, error) {
@@ -650,10 +641,9 @@ func summarizeWhatsAppPayload(payload map[string]any, fallbackBody string) whats
 		summary.Portal["isForwarded"] = forwarded
 	}
 
+	structuredBody := buildWhatsAppStructuredBody(payload, summary.Portal)
 	if summary.Body == "" {
-		summary.Body = buildWhatsAppStructuredBody(payload, summary.Portal)
-	} else {
-		buildWhatsAppStructuredBody(payload, summary.Portal)
+		summary.Body = structuredBody
 	}
 
 	if summary.Body != "" && summary.Portal["text"] == nil {
@@ -687,25 +677,24 @@ func buildWhatsAppStructuredBody(payload map[string]any, portal map[string]any) 
 		messageType string
 		label       string
 	}{
-		{key: "image", messageType: "image", label: "[Afbeelding]"},
-		{key: "video", messageType: "video", label: "[Video]"},
-		{key: "audio", messageType: "audio", label: "[Audio]"},
-		{key: "document", messageType: "file", label: "[Bestand]"},
-		{key: "sticker", messageType: "sticker", label: "[Sticker]"},
-		{key: "video_note", messageType: "video_note", label: "[Videonotitie]"},
+		{"image", "image", "[Afbeelding]"},
+		{"video", "video", "[Video]"},
+		{"audio", "audio", "[Audio]"},
+		{"document", "file", "[Bestand]"},
+		{"sticker", "sticker", "[Sticker]"},
+		{"video_note", "video_note", "[Videonotitie]"},
 	}
+
 	for _, field := range structuredFields {
 		if body := buildWhatsAppMediaPortal(payload, portal, field.key, field.messageType, field.label); body != "" {
 			return body
 		}
 	}
+
 	if body := buildWhatsAppLocationPortal(payload, portal); body != "" {
 		return body
 	}
-	if body := buildWhatsAppContactPortal(payload, portal); body != "" {
-		return body
-	}
-	return ""
+	return buildWhatsAppContactPortal(payload, portal)
 }
 
 func buildWhatsAppMediaPortal(payload map[string]any, portal map[string]any, key string, messageType string, label string) string {
@@ -719,29 +708,40 @@ func buildWhatsAppMediaPortal(payload map[string]any, portal map[string]any, key
 
 	switch typed := value.(type) {
 	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed == "" {
+		if trimmed := strings.TrimSpace(typed); trimmed != "" {
+			attachment["path"] = trimmed
+		} else {
 			return ""
 		}
-		attachment["path"] = trimmed
 	case map[string]any:
-		if path := strings.TrimSpace(stringValue(typed["path"])); path != "" {
-			attachment["path"] = path
-		}
-		if remoteURL := strings.TrimSpace(stringValue(typed["url"])); remoteURL != "" {
-			attachment["remoteUrl"] = remoteURL
-		}
-		if filename := strings.TrimSpace(stringValue(typed["filename"])); filename != "" {
-			attachment["filename"] = filename
-		}
-		if caption := strings.TrimSpace(stringValue(typed["caption"])); caption != "" {
-			portal["caption"] = caption
+		if !handleWhatsAppMediaMap(typed, attachment, portal) {
+			return label
 		}
 	default:
 		return label
 	}
 
 	portal["attachment"] = attachment
+	return buildWhatsAppMediaCaption(portal, attachment, label)
+}
+
+func handleWhatsAppMediaMap(value map[string]any, attachment map[string]any, portal map[string]any) bool {
+	if path := strings.TrimSpace(stringValue(value["path"])); path != "" {
+		attachment["path"] = path
+	}
+	if remoteURL := strings.TrimSpace(stringValue(value["url"])); remoteURL != "" {
+		attachment["remoteUrl"] = remoteURL
+	}
+	if filename := strings.TrimSpace(stringValue(value["filename"])); filename != "" {
+		attachment["filename"] = filename
+	}
+	if caption := strings.TrimSpace(stringValue(value["caption"])); caption != "" {
+		portal["caption"] = caption
+	}
+	return true
+}
+
+func buildWhatsAppMediaCaption(portal map[string]any, attachment map[string]any, label string) string {
 	if caption := strings.TrimSpace(stringValue(portal["caption"])); caption != "" {
 		return caption
 	}
@@ -760,14 +760,14 @@ func buildWhatsAppContactPortal(payload map[string]any, portal map[string]any) s
 	if !ok || value == nil {
 		return ""
 	}
+
 	contactMap, ok := value.(map[string]any)
+	portal["messageType"] = "contact"
 	if !ok {
-		portal["messageType"] = "contact"
 		return "[Contact]"
 	}
 
 	contact := normalizeWhatsAppContact(contactMap)
-	portal["messageType"] = "contact"
 	if len(contact) > 0 {
 		portal["contact"] = contact
 	}
@@ -804,6 +804,7 @@ func buildWhatsAppContactsArrayPortal(payload map[string]any, portal map[string]
 			names = append(names, name)
 		}
 	}
+
 	portal["messageType"] = "contact"
 	if len(contacts) > 0 {
 		portal["contacts"] = contacts
@@ -822,15 +823,14 @@ func normalizeWhatsAppContact(value map[string]any) map[string]any {
 	if name := strings.TrimSpace(stringValue(value["displayName"])); name != "" {
 		contact["name"] = name
 	}
-	vcard := strings.TrimSpace(stringValue(value["vcard"]))
-	if phoneNumber := extractWhatsAppPhoneFromVCard(vcard); phoneNumber != "" {
+	if phoneNumber := extractWhatsAppPhoneFromVCard(strings.TrimSpace(stringValue(value["vcard"]))); phoneNumber != "" {
 		contact["phone"] = phoneNumber
 	}
 	return contact
 }
 
 func extractWhatsAppPhoneFromVCard(vcard string) string {
-	if strings.TrimSpace(vcard) == "" {
+	if vcard == "" {
 		return ""
 	}
 	for _, line := range strings.Split(vcard, "\n") {
@@ -839,25 +839,22 @@ func extractWhatsAppPhoneFromVCard(vcard string) string {
 			continue
 		}
 		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) != 2 {
-			continue
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[1])
 		}
-		return strings.TrimSpace(parts[1])
 	}
 	return ""
 }
 
 func buildWhatsAppLocationPortal(payload map[string]any, portal map[string]any) string {
 	for _, key := range []string{"location", "live_location"} {
-		location, preview, ok := normalizeWhatsAppLocationPayload(payload[key], key == "live_location")
-		if !ok {
-			continue
+		if location, preview, ok := normalizeWhatsAppLocationPayload(payload[key], key == "live_location"); ok {
+			portal["messageType"] = "location"
+			if len(location) > 0 {
+				portal["location"] = location
+			}
+			return preview
 		}
-		portal["messageType"] = "location"
-		if len(location) > 0 {
-			portal["location"] = location
-		}
-		return preview
 	}
 	return ""
 }
@@ -886,6 +883,7 @@ func buildWhatsAppPollPortal(payload map[string]any, portal map[string]any) stri
 	if maxAnswer != "" {
 		poll["maxAnswer"] = maxAnswer
 	}
+
 	portal["messageType"] = "poll"
 	portal["poll"] = poll
 
@@ -939,11 +937,10 @@ func stringSliceValue(value any) []string {
 	case []any:
 		return normalizeAnyStringSlice(typed)
 	default:
-		trimmed := strings.TrimSpace(stringValue(value))
-		if trimmed == "" {
-			return nil
+		if trimmed := strings.TrimSpace(stringValue(value)); trimmed != "" {
+			return []string{trimmed}
 		}
-		return []string{trimmed}
+		return nil
 	}
 }
 
