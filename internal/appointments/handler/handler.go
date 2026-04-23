@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context" // Added missing import
 	"net/http"
 
 	"portal_final_backend/internal/appointments/service"
@@ -18,29 +19,15 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-// Handler handles HTTP requests for RAC_appointments
 type Handler struct {
 	svc *service.Service
 	val *validator.Validator
 }
 
-// New creates a new RAC_appointments handler
 func New(svc *service.Service, val *validator.Validator) *Handler {
 	return &Handler{svc: svc, val: val}
 }
 
-// mustGetTenantID extracts the tenant ID from identity and returns it.
-// Returns zero UUID and false if tenant ID is not present.
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
-		return uuid.UUID{}, false
-	}
-	return *tenantID, true
-}
-
-// RegisterRoutes registers the appointment routes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
 	rg.POST("", h.Create)
@@ -55,681 +42,476 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments", h.CreateAttachment)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 
-	rg.GET("/availability/rules", h.ListAvailabilityRules)
-	rg.POST("/availability/rules", h.CreateAvailabilityRule)
-	rg.PUT("/availability/rules/:id", h.UpdateAvailabilityRule)
-	rg.DELETE("/availability/rules/:id", h.DeleteAvailabilityRule)
+	avail := rg.Group("/availability")
+	{
+		avail.GET("/rules", h.ListAvailabilityRules)
+		avail.POST("/rules", h.CreateAvailabilityRule)
+		avail.PUT("/rules/:id", h.UpdateAvailabilityRule)
+		avail.DELETE("/rules/:id", h.DeleteAvailabilityRule)
 
-	rg.GET("/availability/overrides", h.ListAvailabilityOverrides)
-	rg.POST("/availability/overrides", h.CreateAvailabilityOverride)
-	rg.PUT("/availability/overrides/:id", h.UpdateAvailabilityOverride)
-	rg.DELETE("/availability/overrides/:id", h.DeleteAvailabilityOverride)
+		avail.GET("/overrides", h.ListAvailabilityOverrides)
+		avail.POST("/overrides", h.CreateAvailabilityOverride)
+		avail.PUT("/overrides/:id", h.UpdateAvailabilityOverride)
+		avail.DELETE("/overrides/:id", h.DeleteAvailabilityOverride)
 
-	rg.GET("/availability/slots", h.GetAvailableSlots)
+		avail.GET("/slots", h.GetAvailableSlots)
+	}
 }
 
-// PresignAttachmentUpload handles POST /api/appointments/:id/attachments/presign
-func (h *Handler) PresignAttachmentUpload(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
+// --- Appointments ---
 
-	var req transport.PresignedUploadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
-	if !ok {
-		return
-	}
-
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.PresignAttachmentUpload(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
-}
-
-// List handles GET /api/RAC_appointments
 func (h *Handler) List(c *gin.Context) {
 	var req transport.ListAppointmentsRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+	if !h.bind(c, &req, true) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.List(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.List(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// Create handles POST /api/RAC_appointments
 func (h *Handler) Create(c *gin.Context) {
 	var req transport.CreateAppointmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.Create(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, result)
+	result, err := h.svc.Create(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusCreated)
 }
 
-// GetByID handles GET /api/RAC_appointments/:id
 func (h *Handler) GetByID(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	id, ok := h.pathID(c, "id")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetByID(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
-	if httpkit.HandleError(c, err) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, result)
+	result, err := h.svc.GetByID(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// Update handles PUT /api/RAC_appointments/:id
 func (h *Handler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.UpdateAppointmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.Update(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.Update(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// Delete handles DELETE /api/RAC_appointments/:id
 func (h *Handler) Delete(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	id, ok := h.pathID(c, "id")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.Delete(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID); httpkit.HandleError(c, err) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, gin.H{"message": "appointment deleted"})
+	err := h.svc.Delete(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID)
+	h.respond(c, gin.H{"message": "appointment deleted"}, err, http.StatusOK)
 }
 
-// UpdateStatus handles PATCH /api/RAC_appointments/:id/status
 func (h *Handler) UpdateStatus(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.UpdateAppointmentStatusRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpdateStatus(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.UpdateStatus(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// GetVisitReport handles GET /api/RAC_appointments/:id/visit-report
-func (h *Handler) GetVisitReport(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
+// --- Visit Reports ---
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+func (h *Handler) GetVisitReport(c *gin.Context) {
+	id, ok := h.pathID(c, "id")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetVisitReport(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID)
 	if err != nil {
-		// UX: missing visit report is not exceptional; return 200 null so the UI can show an empty editor.
-		if domainErr, ok := err.(*apperr.Error); ok && domainErr.Kind == apperr.KindNotFound && domainErr.Message == "visit report not found" {
+		if domainErr, ok := err.(*apperr.Error); ok && domainErr.Kind == apperr.KindNotFound {
 			httpkit.OK(c, nil)
 			return
 		}
-		if httpkit.HandleError(c, err) {
-			return
-		}
+		httpkit.HandleError(c, err)
+		return
 	}
-
 	httpkit.OK(c, result)
 }
 
-// UpsertVisitReport handles PUT /api/RAC_appointments/:id/visit-report
 func (h *Handler) UpsertVisitReport(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.UpsertVisitReportRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpsertVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
+	result, err := h.svc.UpsertVisitReport(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
+}
+
+// --- Attachments ---
+
+func (h *Handler) PresignAttachmentUpload(c *gin.Context) {
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, result)
+	var req transport.PresignedUploadRequest
+	if !h.bind(c, &req, false) {
+		return
+	}
+
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.PresignAttachmentUpload(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// CreateAttachment handles POST /api/RAC_appointments/:id/attachments
 func (h *Handler) CreateAttachment(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.CreateAppointmentAttachmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAttachment(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, result)
+	result, err := h.svc.CreateAttachment(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusCreated)
 }
 
-// ListAttachments handles GET /api/RAC_appointments/:id/attachments
 func (h *Handler) ListAttachments(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	id, ok := h.pathID(c, "id")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAttachments(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
-	if httpkit.HandleError(c, err) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, result)
+	result, err := h.svc.ListAttachments(ctx, id, auth.UserID, auth.IsAdmin, auth.TenantID)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// GetAttachmentDownloadURL handles GET /api/appointments/:id/attachments/:attachmentId/download
 func (h *Handler) GetAttachmentDownloadURL(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
-
-	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	attID, ok := h.pathID(c, "attachmentId")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetAttachmentDownloadURL(c.Request.Context(), id, attachmentID, identity.UserID(), isAdmin, tenantID)
-	if httpkit.HandleError(c, err) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, result)
+	result, err := h.svc.GetAttachmentDownloadURL(ctx, id, attID, auth.UserID, auth.IsAdmin, auth.TenantID)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// CreateAvailabilityRule handles POST /api/RAC_appointments/availability/rules
+// --- Availability ---
+
 func (h *Handler) CreateAvailabilityRule(c *gin.Context) {
 	var req transport.CreateAvailabilityRuleRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, result)
+	result, err := h.svc.CreateAvailabilityRule(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusCreated)
 }
 
-// ListAvailabilityRules handles GET /api/RAC_appointments/availability/rules
 func (h *Handler) ListAvailabilityRules(c *gin.Context) {
 	var userID *uuid.UUID
 	if raw := c.Query("userId"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-			return
+		if id, err := uuid.Parse(raw); err == nil {
+			userID = &id
 		}
-		userID = &parsed
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAvailabilityRules(c.Request.Context(), identity.UserID(), isAdmin, tenantID, userID)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.ListAvailabilityRules(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, userID)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// DeleteAvailabilityRule handles DELETE /api/RAC_appointments/availability/rules/:id
-func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
-	if !ok {
-		return
-	}
-
-	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.DeleteAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id); httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "availability rule deleted"})
-}
-
-// UpdateAvailabilityRule handles PUT /api/RAC_appointments/availability/rules/:id
 func (h *Handler) UpdateAvailabilityRule(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.UpdateAvailabilityRuleRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpdateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.UpdateAvailabilityRule(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, id, req)
+	h.respond(c, result, err, http.StatusOK)
 }
 
-// CreateAvailabilityOverride handles POST /api/RAC_appointments/availability/overrides
-func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
-	var req transport.CreateAvailabilityOverrideRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
+	id, ok := h.pathID(c, "id")
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
-	if httpkit.HandleError(c, err) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
 		return
 	}
 
-	httpkit.JSON(c, http.StatusCreated, result)
+	err := h.svc.DeleteAvailabilityRule(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, id)
+	h.respond(c, gin.H{"message": "availability rule deleted"}, err, http.StatusOK)
 }
 
-// ListAvailabilityOverrides handles GET /api/RAC_appointments/availability/overrides
 func (h *Handler) ListAvailabilityOverrides(c *gin.Context) {
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
+		return
+	}
+
 	var userID *uuid.UUID
 	if raw := c.Query("userId"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-			return
+		if id, err := uuid.Parse(raw); err == nil {
+			userID = &id
 		}
-		userID = &parsed
 	}
 
-	startDate := c.Query("startDate")
-	endDate := c.Query("endDate")
-	var startPtr *string
-	var endPtr *string
-	if startDate != "" {
-		startPtr = &startDate
+	start, end := c.Query("startDate"), c.Query("endDate")
+	var startPtr, endPtr *string
+	if start != "" {
+		startPtr = &start
 	}
-	if endDate != "" {
-		endPtr = &endDate
+	if end != "" {
+		endPtr = &end
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
+	result, err := h.svc.ListAvailabilityOverrides(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, userID, startPtr, endPtr)
+	h.respond(c, result, err, http.StatusOK)
+}
+
+func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
+	var req transport.CreateAvailabilityOverrideRequest
+	if !h.bind(c, &req, false) {
 		return
 	}
-	tenantID, ok := mustGetTenantID(c, identity)
+
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAvailabilityOverrides(c.Request.Context(), identity.UserID(), isAdmin, tenantID, userID, startPtr, endPtr)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
+	result, err := h.svc.CreateAvailabilityOverride(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusCreated)
 }
 
-// DeleteAvailabilityOverride handles DELETE /api/RAC_appointments/availability/overrides/:id
-func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
-	if !ok {
-		return
-	}
-
-	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.DeleteAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id); httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "availability override deleted"})
-}
-
-// UpdateAvailabilityOverride handles PUT /api/RAC_appointments/availability/overrides/:id
 func (h *Handler) UpdateAvailabilityOverride(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
 	var req transport.UpdateAvailabilityOverrideRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req, false) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpdateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id, req)
-	if httpkit.HandleError(c, err) {
+	result, err := h.svc.UpdateAvailabilityOverride(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, id, req)
+	h.respond(c, result, err, http.StatusOK)
+}
+
+func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
+	id, ok := h.pathID(c, "id")
+	if !ok {
 		return
 	}
 
-	httpkit.OK(c, result)
+	ctx, auth, ok := h.reqCtx(c)
+	if !ok {
+		return
+	}
+
+	err := h.svc.DeleteAvailabilityOverride(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, id)
+	h.respond(c, gin.H{"message": "availability override deleted"}, err, http.StatusOK)
 }
 
-// GetAvailableSlots handles GET /api/RAC_appointments/availability/slots
 func (h *Handler) GetAvailableSlots(c *gin.Context) {
 	var req transport.GetAvailableSlotsRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+	if !h.bind(c, &req, true) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	ctx, auth, ok := h.reqCtx(c)
 	if !ok {
 		return
 	}
 
-	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetAvailableSlots(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
+	result, err := h.svc.GetAvailableSlots(ctx, auth.UserID, auth.IsAdmin, auth.TenantID, req)
+	h.respond(c, result, err, http.StatusOK)
+}
+
+// --- Helpers ---
+
+type authParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	IsAdmin  bool
+}
+
+func (h *Handler) reqCtx(c *gin.Context) (context.Context, authParams, bool) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return nil, authParams{}, false
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
+		return nil, authParams{}, false
+	}
+
+	isAdmin := false
+	for _, r := range identity.Roles() {
+		if r == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+
+	return c.Request.Context(), authParams{
+		UserID:   identity.UserID(),
+		TenantID: *tenantID,
+		IsAdmin:  isAdmin,
+	}, true
+}
+
+func (h *Handler) pathID(c *gin.Context, key string) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param(key))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *Handler) bind(c *gin.Context, req interface{}, isQuery bool) bool {
+	var err error
+	if isQuery {
+		err = c.ShouldBindQuery(req)
+	} else {
+		err = c.ShouldBindJSON(req)
+	}
+
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+		return false
+	}
+
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return false
+	}
+	return true
+}
+
+func (h *Handler) respond(c *gin.Context, data interface{}, err error, successStatus int) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
-	httpkit.OK(c, result)
-}
-
-func containsRole(roles []string, role string) bool {
-	for _, r := range roles {
-		if r == role {
-			return true
-		}
+	if successStatus == http.StatusCreated {
+		httpkit.JSON(c, http.StatusCreated, data)
+	} else {
+		httpkit.OK(c, data)
 	}
-	return false
 }
