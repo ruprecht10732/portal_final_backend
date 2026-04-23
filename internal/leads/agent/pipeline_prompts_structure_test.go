@@ -328,7 +328,7 @@ func TestBuildDispatcherPromptUsesQuotedReferenceDataAndToolOnlyContract(t *test
 	prompt := buildDispatcherPrompt(lead, service, 25, []uuid.UUID{uuid.New()})
 
 	checks := []string{
-		"You MUST write out your reasoning inside <thinking>...</thinking> tags before outputting any tool calls.",
+		"Before ANY tool calls, write your step-by-step reasoning inside <thinking>...</thinking> tags.",
 		"=== DATA CONTEXT ===\n\"\"\"",
 		"Respond ONLY with tool calls.",
 	}
@@ -345,7 +345,7 @@ func TestBuildQuoteGeneratePromptUsesQuotedReferenceDataAndToolOnlyContract(t *t
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
-		"You MUST write out your reasoning inside <thinking>...</thinking> tags before outputting any tool calls.",
+		"Before ANY tool calls, write your step-by-step reasoning inside <thinking>...</thinking> tags.",
 		"=== DATA CONTEXT ===\n\"\"\"",
 		quoteGeneratorPromptRequest,
 	}
@@ -429,7 +429,7 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 		"=== EXECUTION PRIORITY ===",
 		toolOrderMandatoryHeader,
 		"1. ListCatalogGaps (once)",
-		"2. SearchProductMaterials (limit calls: one broad search per material category, reuse results across quote lines)",
+		"2. SearchProductMaterials (limit calls: one broad search per material category, reuse results across quote lines; independent categories MAY be searched in parallel)",
 		"3. Calculator",
 		"4. CalculateEstimate",
 		"5. DraftQuote",

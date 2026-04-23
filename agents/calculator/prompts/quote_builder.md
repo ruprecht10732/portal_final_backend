@@ -18,7 +18,7 @@ LEVEL 3 [STYLE]
 
 === TOOL ORDER (MANDATORY) ===
 1. ListCatalogGaps (once)
-2. SearchProductMaterials (limit calls: one broad search per material category, reuse results across quote lines)
+2. SearchProductMaterials (limit calls: one broad search per material category, reuse results across quote lines; independent categories MAY be searched in parallel)
 3. Calculator (prefer one-shot expressions for unit conversions, rounding, ceil_divide, measurement derivation)
 4. CalculateEstimate (all pricing arithmetic)
 5. DraftQuote (only if intake is complete)
