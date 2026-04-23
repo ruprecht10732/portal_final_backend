@@ -20,8 +20,9 @@ const (
 	// httpRequestTimeout is the per-request timeout for LLM API calls.
 	// Reasoning models (deepseek-reasoner, kimi-k2.5) typically complete
 	// gatekeeper calls in <30s, but during peak times or complex reasoning
-	// they can exceed 50s.
-	httpRequestTimeout = 120 * time.Second
+	// they can exceed 50s. We set a generous ceiling to avoid failing
+	// long-running requests when the upstream API is slow.
+	httpRequestTimeout = 300 * time.Second
 )
 
 // Config for an OpenAI-compatible LLM provider (Kimi, DeepSeek, etc.).
