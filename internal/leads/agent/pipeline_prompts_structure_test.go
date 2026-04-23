@@ -121,7 +121,7 @@ func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
 	})
 
 	checks := []string{
-		"Photo-derived measurements are advisory only unless explicitly visible/labeled; on-site measurement flags override them.",
+		"Photo-derived measurements are advisory only unless explicitly visible, labeled, or otherwise directly stated in trusted context.",
 		"Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed.",
 		"Needs on-site measurement: Exacte dagmaat ontbreekt",
 	}
@@ -140,7 +140,7 @@ func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
 	checks := []string{
 		"Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.",
 		"If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension UNLESS that dimension is already verified through a non-photo source such as an appointment measurement or an explicit user note.",
-		"For repair, adjustment, diagnosis, inspection, or replacement work, measurements needed only for final on-site verification or exact part selection are NOT automatically critical when trusted context already supports a bounded preliminary estimate.",
+		"For repair, adjustment, diagnosis, inspection, or replacement work, missing secondary measurements are not critical blockers when the primary dimensions come from a trusted source",
 	}
 
 	for _, token := range checks {
@@ -328,7 +328,7 @@ func TestBuildDispatcherPromptUsesQuotedReferenceDataAndToolOnlyContract(t *test
 	prompt := buildDispatcherPrompt(lead, service, 25, []uuid.UUID{uuid.New()})
 
 	checks := []string{
-		"You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.",
+		"You MUST write out your reasoning inside <thinking>...</thinking> tags before outputting any tool calls.",
 		"=== DATA CONTEXT ===\n\"\"\"",
 		"Respond ONLY with tool calls.",
 	}
@@ -345,7 +345,7 @@ func TestBuildQuoteGeneratePromptUsesQuotedReferenceDataAndToolOnlyContract(t *t
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
-		"You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.",
+		"You MUST write out your reasoning inside <thinking>...</thinking> tags before outputting any tool calls.",
 		"=== DATA CONTEXT ===\n\"\"\"",
 		quoteGeneratorPromptRequest,
 	}
@@ -597,8 +597,8 @@ func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing
 
 	checks := []string{
 		"[MANDATORY] Prefer one Calculator expression when you need subtotal + VAT + markup in a single step.",
-		"[EXAMPLE] VAT-inclusive subtotal: Calculator(expression=\"((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21\").",
-		"[EXAMPLE] VAT-inclusive subtotal plus markup: Calculator(expression=\"(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10\").",
+		"[EXAMPLE] Material subtotal + VAT: Calculator(expression=\"((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21\").",
+		"[EXAMPLE] Material subtotal + VAT + markup: Calculator(expression=\"(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10\").",
 	}
 
 	for _, token := range checks {

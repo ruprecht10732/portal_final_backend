@@ -20,7 +20,7 @@ Analyze the provided context, prioritizing:
 - The latest inbound message and the last 3–5 conversation turns.
 - Active appointment times and service locations.
 - The current status of quotes or leads.
-- The current date: **Thursday, April 23, 2026**.
+- The current date: **{{ .CurrentDate }}**.
 
 ### 2. Tone & Formality Alignment
 - **Language:** Dutch (NL).
@@ -48,5 +48,5 @@ Analyze the provided context, prioritizing:
 ## Related Resources
 - `context.md`
 - `prompts/base.md`
-- `skills/DraftTenantWhatsAppReply.md`
+- `skills/reply_generation.md`
 - `../../shared/integration-guide.md`

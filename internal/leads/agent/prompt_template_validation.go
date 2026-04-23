@@ -20,6 +20,7 @@ func ValidatePromptTemplates() error {
 			data: gatekeeperPromptTemplateData{
 				ExecutionContract:         "execution",
 				CommunicationContract:     "communication",
+				SharedPhotoTrustRules:     "photo trust",
 				PreferredChannel:          "WhatsApp",
 				RecoveryModeSection:       "recovery",
 				CycleAwarenessSection:     "cycle awareness",
@@ -47,37 +48,42 @@ func ValidatePromptTemplates() error {
 			name: "scope-analyzer",
 			tmpl: scopeAnalyzerPromptTemplate,
 			data: struct {
-				ExecutionContract  string
-				LeadID             uuid.UUID
-				ServiceID          uuid.UUID
-				ServiceType        string
-				PipelineStage      string
-				ServiceNoteSummary string
-				NotesSection       string
-				PreferencesSummary string
-				PhotoSummary       string
-			}{"execution", uuid.New(), uuid.New(), "service", "Estimation", "note", "notes", "prefs", "photo"},
+				ExecutionContract            string
+				SharedPhotoTrustRules        string
+				SharedIntakeCompletenessGate string
+				LeadID                       uuid.UUID
+				ServiceID                    uuid.UUID
+				ServiceType                  string
+				PipelineStage                string
+				ServiceNoteSummary           string
+				NotesSection                 string
+				PreferencesSummary           string
+				PhotoSummary                 string
+			}{"execution", "photo trust", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "note", "notes", "prefs", "photo"},
 		},
 		{
 			name: "quote-builder",
 			tmpl: quoteBuilderPromptTemplate,
 			data: struct {
-				ExecutionContract           string
-				ScopeSummary                string
-				SharedProductSelectionRules string
-				LeadID                      uuid.UUID
-				ServiceID                   uuid.UUID
-				ServiceType                 string
-				PipelineStage               string
-				CreatedAt                   string
-				ConsumerSummary             string
-				LocationSummary             string
-				ServiceNoteSummary          string
-				NotesSection                string
-				PreferencesSummary          string
-				PhotoSummary                string
-				EstimationContextSummary    string
-			}{"execution", "scope", "product rules", uuid.New(), uuid.New(), "service", "Estimation", "2026-03-11T10:00:00Z", "consumer", "location", "note", "notes", "prefs", "photo", "guidelines"},
+				ExecutionContract            string
+				ScopeSummary                 string
+				SharedProductSelectionRules  string
+				SharedMathExamples           string
+				SharedPhotoTrustRules        string
+				SharedIntakeCompletenessGate string
+				LeadID                       uuid.UUID
+				ServiceID                    uuid.UUID
+				ServiceType                  string
+				PipelineStage                string
+				CreatedAt                    string
+				ConsumerSummary              string
+				LocationSummary              string
+				ServiceNoteSummary           string
+				NotesSection                 string
+				PreferencesSummary           string
+				PhotoSummary                 string
+				EstimationContextSummary     string
+			}{"execution", "scope", "product rules", "math examples", "photo trust", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "2026-03-11T10:00:00Z", "consumer", "location", "note", "notes", "prefs", "photo", "guidelines"},
 		},
 		{
 			name: "investigative",
@@ -115,8 +121,9 @@ func ValidatePromptTemplates() error {
 			data: struct {
 				ExecutionContract           string
 				SharedProductSelectionRules string
+				SharedMathExamples          string
 				ReferenceData               string
-			}{"execution", "product rules", "reference"},
+			}{"execution", "product rules", "math examples", "reference"},
 		},
 		{
 			name: "quote-critic",

@@ -11,6 +11,7 @@ Persist a clarification-oriented analysis when qualification updates the intake 
 ## Required Inputs
 
 - Updated summary, missing information, and recommended next step.
+- `_reasoning` (internal): Comprehensive rationale for the analysis conclusions, including what changed during clarification and why.
 
 ## Outputs
 

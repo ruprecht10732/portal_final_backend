@@ -9,7 +9,14 @@ import (
 //go:embed gatekeeper/prompts/*.md
 //go:embed matchmaker/prompts/*.md
 //go:embed shared/prompts/*.md
+//go:embed subsidy-analyzer/prompts/*.md
+//go:embed support/call_logger/prompts/*.md
+//go:embed support/email_reply/prompts/*.md
+//go:embed support/offer_summary/prompts/*.md
 //go:embed support/photo_analyzer/prompts/*.md
+//go:embed support/whatsapp_agent/prompts/*.md
+//go:embed support/whatsapp_partner_agent/prompts/*.md
+//go:embed support/whatsapp_reply/prompts/*.md
 var promptFS embed.FS
 
 // ReadPromptFile returns the contents of an embedded prompt markdown file.
@@ -29,5 +36,5 @@ func MustReadPromptFile(path string) string {
 	if err != nil {
 		panic(err)
 	}
-	return content
+	return string(content)
 }

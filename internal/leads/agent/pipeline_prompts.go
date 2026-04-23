@@ -47,6 +47,14 @@ var sharedCommunicationContract = mustReadPromptFile("shared/prompts/communicati
 
 var sharedGlobalPreamble = mustReadPromptFile("shared/prompts/global-preamble.md")
 
+var sharedMathExamples = mustReadPromptFile("shared/prompts/math-examples.md")
+
+var sharedPhotoTrustRules = mustReadPromptFile("shared/prompts/photo-trust-rules.md")
+
+var sharedIntakeCompletenessGate = mustReadPromptFile("shared/prompts/intake-completeness-gate.md")
+
+var sharedWhatsAppFormatting = mustReadPromptFile("shared/prompts/whatsapp-formatting.md")
+
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
 	service            repository.LeadService
@@ -73,6 +81,7 @@ type quotePromptInput struct {
 type gatekeeperPromptTemplateData struct {
 	ExecutionContract         string
 	CommunicationContract     string
+	SharedPhotoTrustRules     string
 	PreferredChannel          string
 	RecoveryModeSection       string
 	CycleAwarenessSection     string
@@ -142,6 +151,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	return renderPromptTemplate(gatekeeperPromptTemplate, gatekeeperPromptTemplateData{
 		ExecutionContract:         sharedExecutionContract,
 		CommunicationContract:     sharedCommunicationContract,
+		SharedPhotoTrustRules:     sharedPhotoTrustRules,
 		PreferredChannel:          preferredChannel,
 		RecoveryModeSection:       recoveryModeSection,
 		CycleAwarenessSection:     cycleAwarenessSection,
@@ -291,25 +301,29 @@ func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadServi
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 
 	return renderPromptTemplate(scopeAnalyzerPromptTemplate, struct {
-		ExecutionContract  string
-		LeadID             uuid.UUID
-		ServiceID          uuid.UUID
-		ServiceType        string
-		PipelineStage      string
-		ServiceNoteSummary string
-		NotesSection       string
-		PreferencesSummary string
-		PhotoSummary       string
+		ExecutionContract           string
+		SharedPhotoTrustRules       string
+		SharedIntakeCompletenessGate string
+		LeadID                      uuid.UUID
+		ServiceID                   uuid.UUID
+		ServiceType                 string
+		PipelineStage               string
+		ServiceNoteSummary          string
+		NotesSection                string
+		PreferencesSummary          string
+		PhotoSummary                string
 	}{
-		ExecutionContract:  sharedExecutionContract,
-		LeadID:             lead.ID,
-		ServiceID:          service.ID,
-		ServiceType:        service.ServiceType,
-		PipelineStage:      service.PipelineStage,
-		ServiceNoteSummary: serviceNoteSummary,
-		NotesSection:       notesSection,
-		PreferencesSummary: preferencesSummary,
-		PhotoSummary:       photoSummary,
+		ExecutionContract:            sharedExecutionContract,
+		SharedPhotoTrustRules:        sharedPhotoTrustRules,
+		SharedIntakeCompletenessGate: sharedIntakeCompletenessGate,
+		LeadID:                       lead.ID,
+		ServiceID:                    service.ID,
+		ServiceType:                  service.ServiceType,
+		PipelineStage:                service.PipelineStage,
+		ServiceNoteSummary:           serviceNoteSummary,
+		NotesSection:                 notesSection,
+		PreferencesSummary:           preferencesSummary,
+		PhotoSummary:                 photoSummary,
 	})
 }
 
@@ -325,37 +339,43 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 	locationSummary := buildPromptLocationLine(lead)
 
 	return renderPromptTemplate(quoteBuilderPromptTemplate, struct {
-		ExecutionContract           string
-		ScopeSummary                string
-		SharedProductSelectionRules string
-		LeadID                      uuid.UUID
-		ServiceID                   uuid.UUID
-		ServiceType                 string
-		PipelineStage               string
-		CreatedAt                   string
-		ConsumerSummary             string
-		LocationSummary             string
-		ServiceNoteSummary          string
-		NotesSection                string
-		PreferencesSummary          string
-		PhotoSummary                string
-		EstimationContextSummary    string
+		ExecutionContract            string
+		ScopeSummary                 string
+		SharedProductSelectionRules  string
+		SharedMathExamples           string
+		SharedPhotoTrustRules        string
+		SharedIntakeCompletenessGate string
+		LeadID                       uuid.UUID
+		ServiceID                    uuid.UUID
+		ServiceType                  string
+		PipelineStage                string
+		CreatedAt                    string
+		ConsumerSummary              string
+		LocationSummary              string
+		ServiceNoteSummary           string
+		NotesSection                 string
+		PreferencesSummary           string
+		PhotoSummary                 string
+		EstimationContextSummary     string
 	}{
-		ExecutionContract:           sharedExecutionContract,
-		ScopeSummary:                scopeSummary,
-		SharedProductSelectionRules: sharedProductSelectionRules,
-		LeadID:                      lead.ID,
-		ServiceID:                   service.ID,
-		ServiceType:                 service.ServiceType,
-		PipelineStage:               service.PipelineStage,
-		CreatedAt:                   lead.CreatedAt.Format(time.RFC3339),
-		ConsumerSummary:             consumerSummary,
-		LocationSummary:             locationSummary,
-		ServiceNoteSummary:          serviceNoteSummary,
-		NotesSection:                notesSection,
-		PreferencesSummary:          preferencesSummary,
-		PhotoSummary:                photoSummary,
-		EstimationContextSummary:    estimationContextSummary,
+		ExecutionContract:            sharedExecutionContract,
+		ScopeSummary:                 scopeSummary,
+		SharedProductSelectionRules:  sharedProductSelectionRules,
+		SharedMathExamples:           sharedMathExamples,
+		SharedPhotoTrustRules:        sharedPhotoTrustRules,
+		SharedIntakeCompletenessGate: sharedIntakeCompletenessGate,
+		LeadID:                       lead.ID,
+		ServiceID:                    service.ID,
+		ServiceType:                  service.ServiceType,
+		PipelineStage:                service.PipelineStage,
+		CreatedAt:                    lead.CreatedAt.Format(time.RFC3339),
+		ConsumerSummary:              consumerSummary,
+		LocationSummary:              locationSummary,
+		ServiceNoteSummary:           serviceNoteSummary,
+		NotesSection:                 notesSection,
+		PreferencesSummary:           preferencesSummary,
+		PhotoSummary:                 photoSummary,
+		EstimationContextSummary:     estimationContextSummary,
 	})
 }
 
@@ -778,10 +798,12 @@ User Prompt:
 	return renderPromptTemplate(quoteGeneratePromptTemplate, struct {
 		ExecutionContract           string
 		SharedProductSelectionRules string
+		SharedMathExamples          string
 		ReferenceData               string
 	}{
 		ExecutionContract:           sharedExecutionContract,
 		SharedProductSelectionRules: sharedProductSelectionRules,
+		SharedMathExamples:          sharedMathExamples,
 		ReferenceData:               referenceData,
 	})
 }

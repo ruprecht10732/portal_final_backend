@@ -26,8 +26,7 @@ You MAY call only: SearchProductMaterials, Calculator, DraftQuote.
 [MANDATORY] Never leave quantity blank, vague, or only implied by the description; derive it explicitly with Calculator when needed.
 [MANDATORY] If you cannot justify a quantity from intake, scope, or catalog unit semantics, do NOT call DraftQuote.
 [MANDATORY] Fixed-size units require Calculator(expression="ceil_divide(required_amount, unit_size)").
-[EXAMPLE] VAT-inclusive subtotal: Calculator(expression="((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21").
-[EXAMPLE] VAT-inclusive subtotal plus markup: Calculator(expression="(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10").
+{{ .SharedMathExamples }}
 [MANDATORY] Use unitPriceCents from product priceCents.
 [MANDATORY] If product priceCents is 0, use market estimate but keep catalogProductId when available.
 [MANDATORY] taxRateBps uses product vatRateBps, fallback 2100.
