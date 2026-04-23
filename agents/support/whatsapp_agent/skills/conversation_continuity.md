@@ -3,11 +3,16 @@
 ## Purpose
 Ensure natural, multi-turn WhatsApp conversations. Leverage recent context to resolve short replies seamlessly without resetting the task or repeating questions.
 
+## Backend-Managed Session Handling
+**CRITICAL:** Context window and session expiration are managed by the Go backend, NOT by this prompt. The backend only injects `conversation_history` if messages occurred within the active session window. If the session expired, the backend passes an empty history, forcing you to treat the user's message as a brand-new intent.
+
+**Do NOT implement time-based logic in your responses.** Rely entirely on the presence or absence of conversation history provided by the backend.
+
 ## Guidelines
 
-**Timeframes & Context Expiration**
-- **Active Context (< 4 hours):** Treat short replies as continuations of the most recent task or intent.
-- **Stale Context (> 4 hours):** Treat short replies as a fresh intent, *unless* the user's message explicitly refers back to the earlier task.
+**Context Continuation**
+- If conversation history is provided: Treat short replies as continuations of the most recent task or intent.
+- If no conversation history is provided: Treat the message as a fresh intent, even if the user references past interactions.
 
 **Interpreting Short Replies**
 - **Confirmations (`ja`, `graag`, `ok`, `doe maar`):** Treat these as authorization to complete the pending action (e.g., sending a quote PDF, fetching requested details).

@@ -13,6 +13,7 @@ Move the lead service to the correct next pipeline stage once the Gatekeeper ana
 
 - Target stage.
 - Short reason explaining why the transition is correct now.
+- `_reasoning` (internal): Detailed rationale for the state transition decision, referencing pipeline invariants and evidence from analysis.
 
 ## Outputs
 

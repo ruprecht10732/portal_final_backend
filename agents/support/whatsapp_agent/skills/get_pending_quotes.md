@@ -3,11 +3,9 @@
 ## Purpose
 Retrieve a list of quotes for the authenticated organization, with an optional filter for quote status.
 
-## Parameters
-
-| Parameter | Type   | Required | Description |
-| :-------- | :----- | :------- | :---------- |
-| `status`  | string | No       | Filter by quote status (e.g., "draft", "sent", "accepted", "goedgekeurd"). Omit to retrieve all statuses. |
+## Security & Constraints
+- **Server-Side Enforcement:** `organization_id` is automatically injected from the authenticated user context.
+- **CRITICAL:** Do NOT attempt to pass, guess, or ask the user for an `organization_id` or tenant identifier. The tool input struct strictly rejects these fields.
 
 ## Security & Constraints
 - **Server-Side Enforcement:** `organization_id` is automatically injected from the authenticated user context.

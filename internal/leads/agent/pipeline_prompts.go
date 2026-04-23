@@ -45,6 +45,8 @@ var sharedProductSelectionRules = mustReadPromptFile("shared/prompts/product-sel
 
 var sharedCommunicationContract = mustReadPromptFile("shared/prompts/communication-contract.md")
 
+var sharedGlobalPreamble = mustReadPromptFile("shared/prompts/global-preamble.md")
+
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
 	service            repository.LeadService
@@ -94,7 +96,7 @@ type gatekeeperPromptTemplateData struct {
 	EstimationContextSummary  string
 }
 
-var gatekeeperPromptTemplate = mustLoadPromptTemplate("gatekeeper", "gatekeeper/prompts/base.md")
+var gatekeeperPromptTemplate = mustLoadPromptTemplateWithPreamble("gatekeeper", "gatekeeper/prompts/base.md")
 
 func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	notesSection := buildNotesSection(input.notes, maxGatekeeperNotesChars)

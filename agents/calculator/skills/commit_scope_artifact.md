@@ -11,6 +11,7 @@ Persist the structured scope artifact that downstream estimate and quote steps d
 ## Required Inputs
 
 - Structured scope data and unresolved gaps.
+- `_reasoning` (internal): Step-by-step reasoning showing how scope completeness was determined, assumptions made, and why each work item was included.
 
 ## Outputs
 

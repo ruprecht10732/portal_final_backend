@@ -24,6 +24,16 @@ func mustLoadPromptTemplate(name, path string) *template.Template {
 	return template.Must(template.New(name).Option("missingkey=error").Parse(body))
 }
 
+func mustLoadPromptTemplateWithPreamble(name, path string) *template.Template {
+	body, err := agents.ReadPromptFile(path)
+	if err != nil {
+		panic(fmt.Sprintf("load prompt template %s: %v", path, err))
+	}
+	// Prepend global preamble to ensure universal constraints are applied first
+	fullBody := sharedGlobalPreamble + "\n\n" + body
+	return template.Must(template.New(name).Option("missingkey=error").Parse(fullBody))
+}
+
 func renderPromptTemplate(tmpl *template.Template, data any) string {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

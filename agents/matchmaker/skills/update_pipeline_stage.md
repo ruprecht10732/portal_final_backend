@@ -11,6 +11,7 @@ Move the service through fulfillment-routing stages when the backend artifacts j
 ## Required Inputs
 
 - Target stage and reason.
+- `_reasoning` (internal): Detailed explanation of routing decision based on partner matching, offer artifacts, and fulfillment prerequisites.
 
 ## Outputs
 

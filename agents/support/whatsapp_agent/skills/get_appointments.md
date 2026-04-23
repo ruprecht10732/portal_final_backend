@@ -3,13 +3,6 @@
 ## Purpose
 Retrieve a list of upcoming appointments for the authenticated organization.
 
-## Parameters
-
-| Parameter   | Type   | Required | Description |
-| :---------- | :----- | :------- | :---------- |
-| `date_from` | string | No       | Start date filter (ISO 8601, e.g., "2026-04-15"). Defaults to today. |
-| `date_to`   | string | No       | End date filter (ISO 8601, e.g., "2026-05-15"). Defaults to 30 days from now. |
-
 ## Security & Constraints
 - **Server-Side Enforcement:** `organization_id` is automatically injected from the authenticated user context.
 - **CRITICAL:** Do NOT attempt to pass, guess, or ask the user for an `organization_id` or tenant identifier. The tool input struct strictly rejects these fields.

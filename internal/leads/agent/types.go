@@ -22,6 +22,7 @@ type SaveAnalysisInput struct {
 	PreferredContactChannel string            `json:"preferredContactChannel"` // WhatsApp, Email
 	SuggestedContactMessage string            `json:"suggestedContactMessage"` // Message to send via chosen channel
 	Summary                 string            `json:"summary"`                 // Brief overall analysis
+	Reasoning               string            `json:"_reasoning,omitempty"`    // Internal reasoning for this decision (not customer-facing)
 }
 
 type SaveAnalysisOutput struct {
@@ -35,6 +36,7 @@ type UpdateLeadServiceTypeInput struct {
 	LeadServiceID string `json:"leadServiceId"`
 	ServiceType   string `json:"serviceType"` // Name or slug of an active service type
 	Reason        string `json:"reason"`
+	Reasoning     string `json:"_reasoning,omitempty"` // Internal reasoning for this decision (not customer-facing)
 }
 
 type UpdateLeadServiceTypeOutput struct {
@@ -60,6 +62,7 @@ type UpdateLeadDetailsInput struct {
 	WhatsAppOptedIn *bool    `json:"whatsAppOptedIn,omitempty"`
 	Reason          string   `json:"reason,omitempty"`
 	Confidence      *float64 `json:"confidence,omitempty"`
+	Reasoning       string   `json:"_reasoning,omitempty"` // Internal reasoning for this decision (not customer-facing)
 }
 
 type UpdateLeadDetailsOutput struct {
@@ -70,8 +73,9 @@ type UpdateLeadDetailsOutput struct {
 
 // UpdatePipelineStageInput updates the pipeline stage for the lead service.
 type UpdatePipelineStageInput struct {
-	Stage  string `json:"stage"`
-	Reason string `json:"reason"`
+	Stage     string `json:"stage"`
+	Reason    string `json:"reason"`
+	Reasoning string `json:"_reasoning,omitempty"` // Internal reasoning for this decision (not customer-facing)
 }
 
 type UpdatePipelineStageOutput struct {
@@ -149,7 +153,8 @@ type ScopeArtifact struct {
 }
 
 type CommitScopeArtifactInput struct {
-	Artifact ScopeArtifact `json:"artifact"`
+	Artifact  ScopeArtifact `json:"artifact"`
+	Reasoning string        `json:"_reasoning,omitempty"` // Internal reasoning for this decision (not customer-facing)
 }
 
 type CommitScopeArtifactOutput struct {

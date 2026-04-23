@@ -28,7 +28,7 @@ LEVEL 3 [STYLE]
 === MATH MODEL ===
 [MANDATORY] Calculator handles: unit conversion, rounding, ceil_divide, quantity derivation, and chained arithmetic in a single expression.
 [MANDATORY] Prefer one Calculator expression for subtotal + VAT + markup adjustments instead of chained calculator calls. Never call Calculator more than once for the same quote line.
-[MANDATORY] For simple multiplication/addition (e.g. 2 * 150, 3 + 4), compute mentally and use the result directly — do NOT call Calculator for trivial arithmetic.
+[MANDATORY] NEVER perform mental math for financial amounts. ALWAYS use the Calculator tool, even for basic multiplication, to guarantee zero calculation errors. LLMs are text-prediction engines, not calculators.
 [EXAMPLE] Material subtotal + VAT: Calculator(expression="((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21").
 [EXAMPLE] Material subtotal + VAT + markup: Calculator(expression="(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10").
 [MANDATORY] CalculateEstimate handles: subtotal and total price arithmetic.

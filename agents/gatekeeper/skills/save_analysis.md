@@ -13,6 +13,7 @@ Persist the current Gatekeeper intake analysis as the durable source of truth fo
 
 - Dutch summary of the situation.
 - Missing information, resolved information, urgency, lead quality, and recommended action.
+- `_reasoning` (internal): Comprehensive rationale for the analysis conclusions, including evidence evaluation and decision justification.
 
 ## Outputs
 
