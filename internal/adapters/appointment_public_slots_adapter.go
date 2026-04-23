@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// AppointmentSlotAdapter exposes appointment availability and booking for the public lead portal.
 type AppointmentSlotAdapter struct {
 	svc *service.Service
 }
@@ -30,7 +29,7 @@ func (a *AppointmentSlotAdapter) HasAvailabilityRules(ctx context.Context, organ
 	return len(userIDs) > 0, nil
 }
 
-func (a *AppointmentSlotAdapter) GetAvailableSlots(ctx context.Context, organizationID uuid.UUID, startDate string, endDate string, slotDuration int) (*ports.PublicAvailableSlotsResponse, error) {
+func (a *AppointmentSlotAdapter) GetAvailableSlots(ctx context.Context, organizationID uuid.UUID, startDate, endDate string, slotDuration int) (*ports.PublicAvailableSlotsResponse, error) {
 	userIDs, err := a.svc.ListAvailabilityRuleUserIDs(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -47,12 +46,13 @@ func (a *AppointmentSlotAdapter) GetAvailableSlots(ctx context.Context, organiza
 	return &ports.PublicAvailableSlotsResponse{Days: a.buildPublicDaySlots(dayMap)}, nil
 }
 
-func (a *AppointmentSlotAdapter) CreateRequestedAppointment(ctx context.Context, userID uuid.UUID, organizationID uuid.UUID, leadID uuid.UUID, leadServiceID uuid.UUID, startTime time.Time, endTime time.Time) (*ports.PublicAppointmentSummary, error) {
+func (a *AppointmentSlotAdapter) CreateRequestedAppointment(ctx context.Context, userID, organizationID, leadID, leadServiceID uuid.UUID, startTime, endTime time.Time) (*ports.PublicAppointmentSummary, error) {
 	allowed, err := a.isAllowedToBook(ctx, organizationID, userID)
 	if err != nil {
 		return nil, err
 	}
 	if !allowed {
+		// Fixed: Reverted to fmt.Errorf to resolve the "undefined: ports.ErrUserNotAvailable" error
 		return nil, fmt.Errorf("user not available for booking")
 	}
 
@@ -75,7 +75,7 @@ func (a *AppointmentSlotAdapter) CreateRequestedAppointment(ctx context.Context,
 	return a.toPublicAppointmentSummary(appt), nil
 }
 
-func (a *AppointmentSlotAdapter) isAllowedToBook(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID) (bool, error) {
+func (a *AppointmentSlotAdapter) isAllowedToBook(ctx context.Context, organizationID, userID uuid.UUID) (bool, error) {
 	userIDs, err := a.svc.ListAvailabilityRuleUserIDs(ctx, organizationID)
 	if err != nil {
 		return false, err
@@ -88,26 +88,23 @@ func (a *AppointmentSlotAdapter) isAllowedToBook(ctx context.Context, organizati
 	return false, nil
 }
 
-func (a *AppointmentSlotAdapter) toPublicAppointmentSummary(appt *transport.AppointmentResponse) *ports.PublicAppointmentSummary {
-	return &ports.PublicAppointmentSummary{
-		ID:        appt.ID,
-		StartTime: appt.StartTime,
-		EndTime:   appt.EndTime,
-		Title:     appt.Title,
-		Status:    string(appt.Status),
-	}
+// Internal helper for deduplication without string allocation
+type slotKey struct {
+	date  string
+	start int64
+	end   int64
 }
 
 func (a *AppointmentSlotAdapter) collectAvailableSlots(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	userIDs []uuid.UUID,
-	startDate string,
-	endDate string,
+	startDate, endDate string,
 	slotDuration int,
 ) (map[string][]ports.PublicTimeSlot, error) {
 	dayMap := make(map[string][]ports.PublicTimeSlot)
-	seen := make(map[string]struct{})
+	seen := make(map[slotKey]struct{})
+
 	for _, userID := range userIDs {
 		resp, err := a.svc.GetAvailableSlots(ctx, userID, true, organizationID, transport.GetAvailableSlotsRequest{
 			StartDate:    startDate,
@@ -117,13 +114,20 @@ func (a *AppointmentSlotAdapter) collectAvailableSlots(
 		if err != nil {
 			return nil, err
 		}
+
 		for _, day := range resp.Days {
 			for _, slot := range day.Slots {
-				key := fmt.Sprintf("%s|%s|%s", day.Date, slot.StartTime.Format(time.RFC3339), slot.EndTime.Format(time.RFC3339))
+				key := slotKey{
+					date:  day.Date,
+					start: slot.StartTime.Unix(),
+					end:   slot.EndTime.Unix(),
+				}
+
 				if _, exists := seen[key]; exists {
 					continue
 				}
 				seen[key] = struct{}{}
+
 				dayMap[day.Date] = append(dayMap[day.Date], ports.PublicTimeSlot{
 					UserID:    userID,
 					StartTime: slot.StartTime,
@@ -146,11 +150,29 @@ func (a *AppointmentSlotAdapter) buildPublicDaySlots(dayMap map[string][]ports.P
 	result := make([]ports.PublicDaySlots, 0, len(keys))
 	for _, date := range keys {
 		slots := dayMap[date]
-		sort.Slice(slots, func(i, j int) bool { return slots[i].StartTime.Before(slots[j].StartTime) })
-		result = append(result, ports.PublicDaySlots{Date: date, Slots: slots})
+		sort.Slice(slots, func(i, j int) bool {
+			return slots[i].StartTime.Before(slots[j].StartTime)
+		})
+		result = append(result, ports.PublicDaySlots{
+			Date:  date,
+			Slots: slots,
+		})
 	}
 
 	return result
+}
+
+func (a *AppointmentSlotAdapter) toPublicAppointmentSummary(appt *transport.AppointmentResponse) *ports.PublicAppointmentSummary {
+	if appt == nil {
+		return nil
+	}
+	return &ports.PublicAppointmentSummary{
+		ID:        appt.ID,
+		StartTime: appt.StartTime,
+		EndTime:   appt.EndTime,
+		Title:     appt.Title,
+		Status:    string(appt.Status),
+	}
 }
 
 var _ ports.AppointmentSlotProvider = (*AppointmentSlotAdapter)(nil)
