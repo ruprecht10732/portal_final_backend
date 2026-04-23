@@ -282,6 +282,11 @@ func (c *Client) EnqueuePartnerOfferPDF(ctx context.Context, payload PartnerOffe
 	return normalizeEnqueueError(err)
 }
 
+// ErrDuplicateTask is returned when a task is a duplicate of an existing task
+// in the queue (within the unique TTL window). Callers can use errors.Is to check
+// for this specifically when they need to distinguish "already queued" from other errors.
+var ErrDuplicateTask = asynq.ErrDuplicateTask
+
 func (c *Client) EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error {
 	if c == nil || c.client == nil {
 		return nil
@@ -293,7 +298,9 @@ func (c *Client) EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRun
 	}
 
 	_, err = c.client.EnqueueContext(ctx, task, gatekeeperTaskOptions(c.queue)...)
-	return normalizeEnqueueError(err)
+	// Intentionally NOT using normalizeEnqueueError here so that callers can
+	// distinguish duplicate tasks from successful enqueues.
+	return err
 }
 
 func (c *Client) EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPayload) error {

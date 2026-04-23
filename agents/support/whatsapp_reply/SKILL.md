@@ -1,39 +1,52 @@
 ---
 name: whatsapp_reply
-description: Use when a grounded WhatsApp reply draft must be generated from lead, service, quote, appointment, timeline, and conversation context without performing backend writes.
+description: >-
+  Use when a grounded WhatsApp reply draft must be generated from lead, service, quote, 
+  appointment, timeline, and conversation context. This is a read-only task intended 
+   to assist human operators; it does not perform backend writes or tool calls.
 metadata:
   allowed-tools: []
 ---
 
-# WhatsApp Reply
+# WhatsApp Reply Generation
 
-## Context
-
-<context>
-This workspace drafts a single WhatsApp reply suggestion grounded in known customer and service context.
-It should behave like a careful assistant, not like an autonomous mutating workflow.
-</context>
+## Purpose
+Generate a single, data-grounded WhatsApp reply suggestion for a human operator to send to a customer (tenant). This skill serves as a communication assistant, ensuring accuracy and consistency with the customer's service history.
 
 ## Workflow
 
-### Draft One Grounded Reply
+### 1. Context Resolution
+Analyze the provided context, prioritizing:
+- The latest inbound message and the last 3–5 conversation turns.
+- Active appointment times and service locations.
+- The current status of quotes or leads.
+- The current date: **Thursday, April 23, 2026**.
 
-<step-by-step>
-1. Read the current conversation and lead context.
-2. Resolve the active scenario and tone requirements.
-3. Draft one concise reply that is aligned with the loaded facts.
-4. Avoid claims about quotes, appointments, or internal decisions that are not present in context.
-5. Use native WhatsApp formatting only when it helps readability, and keep it light.
-</step-by-step>
+### 2. Tone & Formality Alignment
+- **Language:** Dutch (NL).
+- **Default Formality:** Use **"u"** unless the history confirms a transition to "je/jij."
+- **Style:** Professional, empathetic, and direct. Avoid corporate jargon or email-style signatures.
 
-## Resources
+### 3. Drafting Guidelines
+- **Groundedness:** Only include facts (dates, prices, addresses) explicitly found in the context.
+- **WhatsApp Formatting:** Use native formatting sparingly:
+    - `*bold*` for dates, times, and key labels.
+    - `- bullet points` for lists.
+- **No Hallucinations:** If a customer asks a question that the context cannot answer, draft a polite clarification question instead of guessing.
+- **Brevity:** Keep the reply concise enough for a mobile screen (max 3–4 short paragraphs).
 
-<resources>
-- Use `context.md`, `prompts/base.md`, and the markdown files in `skills/` for tone and reply-generation rules.
-</resources>
+## Failure Policy
+- **Missing Info:** If the system state is insufficient to answer the customer, draft a response asking for the missing detail (e.g., *"Kunt u aangeven voor welk type vloer u een offerte wilt ontvangen?"*).
+- **Conflict:** If the customer's request conflicts with the system record (e.g., they mention a date that is already passed), politely highlight the record's date and ask for confirmation.
+- **Strict Read-Only:** Never suggest that an action has been taken (e.g., "Ik heb het aangepast") since this tool cannot write to the database. Instead, use: "Ik kan dit voor u aanpassen..."
 
-## Output
+## Output Format
+- Return exactly one string of text.
+- No titles, no internal reasoning, and no code fences in the final output.
+- No surrounding quotes.
 
-<output-format>
-Return one grounded WhatsApp reply draft and no tool calls.
-</output-format>
+## Related Resources
+- `context.md`
+- `prompts/base.md`
+- `skills/DraftTenantWhatsAppReply.md`
+- `../../shared/integration-guide.md`

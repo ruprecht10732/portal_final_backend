@@ -1,35 +1,29 @@
-# GetQuotes
+# Tool: GetQuotes
 
 ## Purpose
-
-Retrieve quotes for the authenticated user's organization, optionally filtered by status.
+Retrieve a list of quotes for the authenticated organization, with an optional filter for quote status.
 
 ## Parameters
 
-| Parameter | Type   | Required | Description                                         |
-|-----------|--------|----------|-----------------------------------------------------|
-| status    | string | No       | Filter by quote status (e.g., "draft", "sent", "accepted", "goedgekeurd"). Omit for all statuses. |
+| Parameter | Type   | Required | Description |
+| :-------- | :----- | :------- | :---------- |
+| `status`  | string | No       | Filter by quote status (e.g., "draft", "sent", "accepted", "goedgekeurd"). Omit to retrieve all statuses. |
 
-## Security
+## Security & Constraints
+- **Server-Side Enforcement:** `organization_id` is automatically injected from the authenticated user context.
+- **CRITICAL:** Do NOT attempt to pass, guess, or ask the user for an `organization_id` or tenant identifier. The tool input struct strictly rejects these fields.
 
-- `organization_id` is injected server-side from the authenticated user context.
-- The tool input struct has NO organization or tenant field — this is enforced at compile time.
-- The LLM must NOT be asked to provide an organization identifier.
+## Autonomy & Execution Logic
+- **Broad Overviews:** If the user asks for a general overview, execute the tool and list the available quotes. Do NOT ask which quote they mean.
+- **Named Customers:** If the user asks for a specific customer's quote, resolve the customer and retrieve matching quotes *before* asking any clarifying questions.
+  - *1 Match:* Provide the quote details directly.
+  - *Multiple Matches:* List them briefly and ask exactly one follow-up question to clarify which quote the user means.
 
-## Output Format
-
-Returns a list of quotes with: quote_number, client_name, total_cents, status, created_at, and a short summary of what the quote covers.
-
-- Communicate `total_cents` to the customer as euros, for example `15000 -> EUR 150,00`.
+## Output Formatting
+- **Included Details:** Present the quotes clearly using the available data: `quote_number`, `client_name`, `status`, `created_at`, and a short summary of what the quote covers.
+- **Price Conversion:** You MUST convert `total_cents` into naturally formatted euros for the customer (e.g., convert `15000` to `EUR 150,00` or `€ 150,00`).
 
 ## Failure Policy
-
-- No quotes found → respond: "Er zijn momenteel geen offertes met die status."
-- Database error → logged internally; respond: "Ik kan de offertes even niet ophalen. Probeer het later opnieuw."
-
-## Autonomy Rules
-
-- If the user asks for the quote of a named customer, resolve the customer and retrieve matching quotes before asking a follow-up question.
-- If exactly one quote matches that customer, answer directly with the quote details.
-- If multiple quotes match that same customer, list them briefly and ask which one the user means.
-- If the user asks for a general quote overview, list the available quotes instead of asking which quote they mean.
+Use these exact Dutch phrases for errors:
+- **0 Matches Found:** "Er zijn momenteel geen offertes met die status."
+- **Database/System Error:** "Ik kan de offertes even niet ophalen. Probeer het later opnieuw."

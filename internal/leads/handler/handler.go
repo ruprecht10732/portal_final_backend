@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -1017,6 +1018,25 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 			LeadID:        id.String(),
 			LeadServiceID: queuedServiceID.String(),
 		}); err != nil {
+			if errors.Is(err, scheduler.ErrDuplicateTask) {
+				dupMsg := "Analysis is already queued or recently run for this service"
+				httpkit.JSON(c, http.StatusAccepted, gin.H{
+					"status":  "already_queued",
+					"message": dupMsg,
+					"leadId":  id,
+					"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
+						JobID:           uuid.New(),
+						Kind:            transport.AutomationRunKindLeadAnalysis,
+						Status:          "pending",
+						LeadID:          id,
+						LeadServiceID:   *queuedServiceID,
+						Step:            "Gatekeeper already queued",
+						ProgressPercent: 5,
+						Message:         &dupMsg,
+					}),
+				})
+				return
+			}
 			if httpkit.HandleError(c, err) {
 				return
 			}

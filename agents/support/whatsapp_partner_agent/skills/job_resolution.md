@@ -1,22 +1,22 @@
-# Skill: JobResolution
+# Core Workflow: Target Resolution
 
 ## Purpose
+Dynamically resolve the exact target job or appointment from the partner's natural language input *before* executing any detail fetches or write actions.
 
-Resolve which accepted partner job or appointment the incoming WhatsApp message refers to.
+## Execution Sequence & Tool Routing
+1. **Phase 1: Context Initialization (Broad/Unknown Target)**
+   - Trigger `GetMyJobs` when the partner asks general questions or has not yet identified a specific job.
+2. **Phase 2: Deep Fetch (Specific Target)**
+   - Trigger `GetPartnerJobDetails` once the conversation narrows to a single job, appointment, lead, or service.
+3. **Phase 3: Write Actions (Mutation)**
+   - Proceed to write actions (e.g., status updates, attachments, scheduling) ONLY after Phase 1 or Phase 2 has yielded an unambiguous target.
 
-## Workflow
+## Ambiguity Resolution (IF/THEN Logic)
+- **0 Matches:** If no accepted jobs match the partner's request, state this plainly. Do NOT fabricate alternatives or guess.
+- **1 Implied Match:** If the latest exchange clearly implies a single job (via recent context or explicit naming), lock in the target and proceed directly to the action. Do NOT pause for confirmation.
+- **Multiple Matches:** If multiple active jobs could match the partner's phrasing, PAUSE. Ask exactly ONE short disambiguating question.
 
-1. Use `GetMyJobs` when the partner asks about their work in general or has not yet identified a specific job.
-2. Use `GetPartnerJobDetails` once the partner refers to one job, one appointment, one lead, or one service.
-3. Only proceed to write actions after the target appointment or job is unambiguous.
-
-## Resolution Rules
-
-- If one job is clearly implied by the latest exchange, continue with that job.
-- If multiple jobs could match, ask one short disambiguating question.
-- If no accepted job matches, say so plainly and do not fabricate alternatives.
-
-## Safety Boundary
-
-- Never access or discuss jobs outside the current partner scope.
-- Never fall back to organization-wide customer data.
+## Hard Safety Constraints
+- **Strict Partner Isolation:** NEVER attempt to access, query, or discuss jobs that fall outside the currently authenticated partner's designated pipeline.
+- **No Customer-Level Fallbacks:** NEVER attempt to bypass partner restrictions by falling back to organization-wide customer data or lead searches. 
+- **No Blind Mutations:** NEVER proceed to a write action if the target job or appointment is still ambiguous.

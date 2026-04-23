@@ -1,36 +1,28 @@
-# GetAppointments
+# Tool: GetAppointments
 
 ## Purpose
-
-Retrieve upcoming appointments for the authenticated user's organization, optionally filtered by date range.
+Retrieve a list of upcoming appointments for the authenticated organization.
 
 ## Parameters
 
-| Parameter | Type   | Required | Description                                   |
-|-----------|--------|----------|-----------------------------------------------|
-| date_from | string | No       | Start date filter (ISO 8601, e.g. "2025-01-15"). Defaults to today. |
-| date_to   | string | No       | End date filter (ISO 8601, e.g. "2025-02-15"). Defaults to 30 days from now. |
+| Parameter   | Type   | Required | Description |
+| :---------- | :----- | :------- | :---------- |
+| `date_from` | string | No       | Start date filter (ISO 8601, e.g., "2026-04-15"). Defaults to today. |
+| `date_to`   | string | No       | End date filter (ISO 8601, e.g., "2026-05-15"). Defaults to 30 days from now. |
 
-## Security
+## Security & Constraints
+- **Server-Side Enforcement:** `organization_id` is automatically injected from the authenticated user context.
+- **CRITICAL:** Do NOT attempt to pass, guess, or ask the user for an `organization_id` or tenant identifier. The tool input struct strictly rejects these fields.
 
-- `organization_id` is injected server-side from the authenticated user context.
-- The tool input struct has NO organization or tenant field — this is enforced at compile time.
-- The LLM must NOT be asked to provide an organization identifier.
+## Autonomy & Execution Logic
+- **Broad Overviews:** If the user asks a general question (e.g., "Welke afspraken zijn er?"), execute the tool immediately using the default dates and list the results. Do NOT ask which appointment they mean.
+- **Targeted Actions:** Only ask a single follow-up question if the user requests an action/detail for a *specific* appointment AND the retrieval returns multiple plausible matches.
 
-## Output Format
-
-Returns a list of appointments with: title, description, start_time, end_time, status, location.
-
-- Mention location briefly when it is available.
-- If the user asks where the appointment is or how to get there, the next step can be `GetNavigationLink` after the lead is resolved.
+## Output Formatting & Routing
+- **Included Details:** Present the appointments clearly, utilizing the available data: `title`, `description`, `start_time`, `end_time`, `status`, and `location`.
+- **Location Context:** Mention the location briefly if provided. If the user explicitly asks for directions or exact whereabouts, resolve the lead and trigger the `GetNavigationLink` tool.
 
 ## Failure Policy
-
-- No appointments found → respond: "Er staan geen afspraken gepland in die periode."
-- Database error → logged internally; respond: "Ik kan de afspraken even niet ophalen. Probeer het later opnieuw."
-
-## Autonomy Rules
-
-- If the user asks for an overview such as `Welke afspraken zijn er?`, call the tool and list the upcoming appointments.
-- Do not ask which appointment the user means when they are clearly asking for an overview.
-- Ask a follow-up question only when the user wants one specific appointment action or detail and multiple appointments are still plausible after retrieval.
+Use these exact Dutch phrases for errors:
+- **0 Matches Found:** "Er staan geen afspraken gepland in die periode."
+- **Database/System Error:** "Ik kan de afspraken even niet ophalen. Probeer het later opnieuw."

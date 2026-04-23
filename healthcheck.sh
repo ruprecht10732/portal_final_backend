@@ -19,6 +19,12 @@ case "$addr" in
   *) hostport="$addr" ;;
 esac
 
+# In the combined container both API and scheduler must be healthy.
+if ! ps | grep -q "[s]cheduler"; then
+  echo "scheduler process not running"
+  exit 1
+fi
+
 if curl -fsS "http://$hostport/api/health" >/dev/null; then
   exit 0
 fi

@@ -370,6 +370,10 @@ func (r gatekeeperEnqueueRequest) enqueue(fingerprint string) {
 		LeadServiceID: r.serviceID.String(),
 		Fingerprint:   fingerprint,
 	}); err != nil && r.log != nil {
+		if errors.Is(err, scheduler.ErrDuplicateTask) {
+			r.log.Info("gatekeeper: duplicate task suppressed at queue layer", "leadId", r.leadID, "serviceId", r.serviceID, "source", r.source)
+			return
+		}
 		r.log.Error("gatekeeper queue enqueue failed", "error", err, "leadId", r.leadID, "serviceId", r.serviceID, "source", r.source)
 	}
 }

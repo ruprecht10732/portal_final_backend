@@ -32,7 +32,7 @@ func (q *queueUniqueGatekeeperScheduler) EnqueueGatekeeperRun(_ context.Context,
 	}
 	key := string(task.Payload())
 	if _, exists := q.seenPayloads[key]; exists {
-		return nil
+		return scheduler.ErrDuplicateTask
 	}
 	q.seenPayloads[key] = struct{}{}
 	q.gatekeeperPayloads = append(q.gatekeeperPayloads, payload)

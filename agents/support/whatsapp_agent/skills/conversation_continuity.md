@@ -1,27 +1,45 @@
 # Conversation Continuity
 
 ## Purpose
-
-Help the WhatsApp agent continue a multi-turn customer conversation naturally without resetting the task after every short reply.
+Ensure natural, multi-turn WhatsApp conversations. Leverage recent context to resolve short replies seamlessly without resetting the task or repeating questions.
 
 ## Guidelines
 
-- Treat short follow-ups like `ja`, `graag`, `ok`, or a bare customer name as continuations of the previous task when the prior user turn already made the requested field clear.
-- If the previous relevant turn is old, for example more than 4 hours, treat a short new message as a fresh intent unless it clearly refers back to the earlier task.
-- If the user already asked for a specific field such as address, phone number, e-mail, status, quote, or appointment details, do not ask for permission again once the correct customer or quote is resolved.
-- When a customer name appears after a prior lookup request, interpret that as disambiguation or confirmation, not as a brand-new request.
-- When a customer name appears after a prior quote request, continue the pending quote lookup for that customer.
-- Prefer completing the pending lookup with tools over asking an extra clarification question.
-- Only ask a new question when the target is still genuinely ambiguous after using the available context and tools.
+**Timeframes & Context Expiration**
+- **Active Context (< 4 hours):** Treat short replies as continuations of the most recent task or intent.
+- **Stale Context (> 4 hours):** Treat short replies as a fresh intent, *unless* the user's message explicitly refers back to the earlier task.
 
-## Examples
+**Interpreting Short Replies**
+- **Confirmations (`ja`, `graag`, `ok`, `doe maar`):** Treat these as authorization to complete the pending action (e.g., sending a quote PDF, fetching requested details).
+- **Bare Entities (Names, Dates, Pronouns):** Treat bare customer names, dates (e.g., `morgen`), or pronouns (e.g., `die van...`) as disambiguation or filtering for the current pending task. 
+- Do NOT treat bare names provided mid-flow as a brand-new, unrelated search request.
 
-- `Zoek Carola Dekker` -> customer name search.
-- `Kan je het adres van Carola Dekker opzoeken?` -> concrete address lookup.
-- `Carola Dekker` after that -> continue the address lookup for that customer.
-- `Zoek de offerte van Carola Dekker` -> resolve customer and retrieve matching quote data.
-- `Die van Carola Dekker` after that -> continue the pending quote lookup for Carola Dekker.
-- `Ja` after `Ik heb Carola Dekker gevonden` -> fetch the requested details directly if the earlier task already established which detail is wanted.
-- `Carola Dekker` two days later after an old unresolved lookup -> usually treat as a fresh intent unless the message explicitly refers back to the earlier question.
-- `Morgen` after discussing appointments -> treat as narrowing the active appointment question to tomorrow.
-- `Doe maar` after offering to send a quote PDF -> continue with the pending send action if the target quote is already clear.
+**Action Bias & Minimizing Friction**
+- **Do Not Re-ask Permission:** If the user previously established what they want (e.g., an address, quote, or appointment detail), execute the action immediately once the target is resolved. 
+- **Tool Over Talk:** Prefer using tools to complete pending lookups. Only ask a new clarifying question if the target remains genuinely ambiguous *after* applying recent context and tool results.
+
+## Examples of Continuity
+
+- **Intent:** `Kan je het adres van Carola Dekker opzoeken?`
+  **User Follow-up:** `Carola Dekker` (after a disambiguation prompt)
+  **Action:** Continue the specific address lookup for that resolved customer.
+
+- **Intent:** `Zoek de offerte van Carola Dekker`
+  **User Follow-up:** `Die van Carola Dekker`
+  **Action:** Continue resolving the pending quote lookup for Carola Dekker.
+
+- **Intent:** `Ik heb Carola Dekker gevonden.` (Where the user previously asked for an address)
+  **User Follow-up:** `Ja`
+  **Action:** Fetch and provide the address directly. Do not ask what detail they want.
+
+- **Intent:** Discussing existing appointments.
+  **User Follow-up:** `Morgen`
+  **Action:** Filter the active appointment search to tomorrow.
+
+- **Intent:** Offering to send a resolved quote.
+  **User Follow-up:** `Doe maar`
+  **Action:** Execute the `SendQuotePDF` tool directly.
+
+- **Intent:** An unresolved customer lookup from two days ago.
+  **User Follow-up:** `Carola Dekker`
+  **Action:** Treat as a fresh intent (Stale Context) and run a general `SearchLeads`.
