@@ -342,6 +342,7 @@ func main() {
 		AppointmentVisitReportWriter: adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
 		AppointmentStatusWriter:      adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
 		RedisClient:                  orchestratorLockRedis,
+		SessionRedis:                 sessionRedis,
 		InboxWriter:                  identitySvc,
 		Logger:                       log,
 	})
