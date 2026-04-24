@@ -77,7 +77,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 	calc := CalculateQuote(transport.QuoteCalculationRequest{Items: req.Items, PricingMode: pricingMode, DiscountType: discountType, DiscountValue: req.DiscountValue})
 	now := time.Now()
 
-	validUntil := req.ValidUntil
+	validUntil := req.ValidUntil.ToTimePtr()
 	if validUntil == nil {
 		_, validDays := s.resolveEffectiveQuoteTerms(ctx, tenantID, req.LeadID, req.LeadServiceID)
 		if validDays > 0 {
@@ -208,7 +208,7 @@ func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest
 		quote.DiscountValue = *req.DiscountValue
 	}
 	if req.ValidUntil != nil {
-		quote.ValidUntil = req.ValidUntil
+		quote.ValidUntil = req.ValidUntil.ToTimePtr()
 	}
 	if req.Notes != nil {
 		quote.Notes = req.Notes
@@ -1128,7 +1128,7 @@ func buildTransferredQuoteRequest(transfer quoteTransferContext, createdLead lea
 		PricingMode:         transfer.sourceQuote.PricingMode,
 		DiscountType:        transfer.sourceQuote.DiscountType,
 		DiscountValue:       transfer.sourceQuote.DiscountValue,
-		ValidUntil:          transfer.sourceQuote.ValidUntil,
+		ValidUntil:          transport.DateFromTime(transfer.sourceQuote.ValidUntil),
 		Notes:               ptrToString(transfer.sourceQuote.Notes),
 		FinancingDisclaimer: transfer.sourceQuote.FinancingDisclaimer,
 		Items:               make([]transport.QuoteItemRequest, len(transfer.items)),

@@ -30,7 +30,7 @@ func TestQuoteUpdateAffectsRenderedPDF(t *testing.T) {
 		{name: "pricing mode", req: transport.UpdateQuoteRequest{PricingMode: &pricingMode}, want: true},
 		{name: "discount type", req: transport.UpdateQuoteRequest{DiscountType: &discountType}, want: true},
 		{name: "discount value", req: transport.UpdateQuoteRequest{DiscountValue: &discountValue}, want: true},
-		{name: "valid until", req: transport.UpdateQuoteRequest{ValidUntil: &now}, want: true},
+		{name: "valid until", req: transport.UpdateQuoteRequest{ValidUntil: &transport.Date{Time: now}}, want: true},
 		{name: "notes", req: transport.UpdateQuoteRequest{Notes: &notes}, want: true},
 		{name: "items", req: transport.UpdateQuoteRequest{Items: &items}, want: true},
 		{name: "attachments", req: transport.UpdateQuoteRequest{Attachments: &attachments}, want: true},

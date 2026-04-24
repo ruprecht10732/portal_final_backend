@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"time"
 
 	isdetransport "portal_final_backend/internal/isde/transport"
@@ -18,6 +19,65 @@ const (
 	QuoteStatusRejected QuoteStatus = "Rejected"
 	QuoteStatusExpired  QuoteStatus = "Expired"
 )
+
+// Date wraps time.Time and accepts both RFC3339 and YYYY-MM-DD during JSON
+// unmarshalling. It marshals back as RFC3339 so response behaviour is unchanged.
+type Date struct {
+	time.Time
+}
+
+// UnmarshalJSON parses a date from either RFC3339 or YYYY-MM-DD format.
+func (d *Date) UnmarshalJSON(data []byte) error {
+	str := string(data)
+	// Remove surrounding quotes if present.
+	if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' {
+		str = str[1 : len(str)-1]
+	}
+	if str == "" || str == "null" {
+		*d = Date{}
+		return nil
+	}
+
+	// Try RFC3339 first (standard time.Time layout).
+	if t, err := time.Parse(time.RFC3339Nano, str); err == nil {
+		*d = Date{Time: t}
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, str); err == nil {
+		*d = Date{Time: t}
+		return nil
+	}
+
+	// Fall back to date-only.
+	if t, err := time.Parse("2006-01-02", str); err == nil {
+		*d = Date{Time: t}
+		return nil
+	}
+
+	return fmt.Errorf("invalid date format: %q", str)
+}
+
+// MarshalJSON emits the date as RFC3339.
+func (d Date) MarshalJSON() ([]byte, error) {
+	return d.Time.MarshalJSON()
+}
+
+// ToTimePtr returns a *time.Time copy, or nil if the Date is zero.
+func (d *Date) ToTimePtr() *time.Time {
+	if d == nil || d.IsZero() {
+		return nil
+	}
+	t := d.Time
+	return &t
+}
+
+// DateFromTime converts a *time.Time into a *Date.
+func DateFromTime(t *time.Time) *Date {
+	if t == nil {
+		return nil
+	}
+	return &Date{Time: *t}
+}
 
 // ── Requests ──────────────────────────────────────────────────────────────────
 
@@ -63,7 +123,7 @@ type CreateQuoteRequest struct {
 	PricingMode         string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
 	DiscountType        string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
 	DiscountValue       int64                    `json:"discountValue" validate:"min=0"`
-	ValidUntil          *time.Time               `json:"validUntil"`
+	ValidUntil          *Date                    `json:"validUntil"`
 	Notes               string                   `json:"notes"`
 	Items               []QuoteItemRequest       `json:"items" validate:"required,dive"`
 	Attachments         []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
@@ -78,7 +138,7 @@ type UpdateQuoteRequest struct {
 	PricingMode         *string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
 	DiscountType        *string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
 	DiscountValue       *int64                    `json:"discountValue" validate:"omitempty,min=0"`
-	ValidUntil          *time.Time                `json:"validUntil"`
+	ValidUntil          *Date                     `json:"validUntil"`
 	Notes               *string                   `json:"notes"`
 	Items               *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
 	Attachments         *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
