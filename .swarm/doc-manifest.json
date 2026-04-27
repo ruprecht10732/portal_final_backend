@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "scanned_at": "2026-04-27T13:40:48.856Z",
+  "files": [
+    {
+      "path": ".github/workflows/agent-eval.yml",
+      "title": "agent-eval.yml",
+      "summary": "name: Agent Trajectory Evaluation on: pull_request: branches: [ \"main\" ] push: branches: [ \"main\" ] jobs: eval: name: Trajectory F1 Evaluation runs-on: ubuntu-latest steps: - uses: actions/checkout@v4",
+      "lines": 25,
+      "mtime": 1776883642657.3572
+    },
+    {
+      "path": "AGENTS.md",
+      "title": "Backend Agents",
+      "summary": "This repository uses a folder-as-a-workspace model for backend lead-processing agents. - Lead: a customer record that can contain one or more services. - Service: a single work request inside a lea...",
+      "lines": 59,
+      "mtime": 1776940502806.8965
+    },
+    {
+      "path": "agents/README.md",
+      "title": "Agent Workspace Index",
+      "summary": "This directory is the file-based source of truth for backend agent behavior. - Give humans and AI systems one navigable entry point into the lead automation stack. - Keep static behavior, trigger d...",
+      "lines": 58,
+      "mtime": 1773389414057.494
+    },
+    {
+      "path": "agents/shared/CHANGELOG.md",
+      "title": "Agent Workspace Changelog",
+      "summary": "- Added `SKILL.md` frontmatter and convention-based workspace loading for role identity, trigger description, and allowed-tools boundaries. - Added glossary, tool reference, integration guide, and ...",
+      "lines": 7,
+      "mtime": 1773302742545.722
+    },
+    {
+      "path": "cmd/lead-energylabel-backfill/README.md",
+      "title": "Lead Energy Label Backfill",
+      "summary": "Run the backfill to fetch EP-Online energy labels for legacy leads that were created before enrichment was introduced. ``` go run ./cmd/lead-energylabel-backfill ``` Environment requirements: - `DA...",
+      "lines": 15,
+      "mtime": 1770215575032.6597
+    },
+    {
+      "path": "docs/adr/0001-notification-outbox-asynq.md",
+      "title": "ADR 0001: Notification workflows via DB outbox + Asynq",
+      "summary": "Date: 2026-02-12 Proposed We send certain notifications (notably WhatsApp messages) directly from request handlers by spawning goroutines and using `time.Sleep` for delays. This has several issues:...",
+      "lines": 91,
+      "mtime": 1771091382230.1863
+    },
+    {
+      "path": "docs/adr/0002-event-driven-agent-chaining.md",
+      "title": "ADR 0002: Event-Driven Agent Chaining",
+      "summary": "Date: 2026-02-16 Status: Accepted Our previous architecture coupled AI agents (Gatekeeper, PhotoAnalyzer) loosely via the database but lacked a coherent signaling mechanism. 1. `Gatekeeper` ran on ...",
+      "lines": 42,
+      "mtime": 1771239438890.6343
+    },
+    {
+      "path": "docs/adr/0003-leadservice-state-reconciliation-engine.md",
+      "title": "ADR 0003: Context-Aware LeadService State Reconciliation Engine",
+      "summary": "Date: 2026-02-17 Status: Proposed `RAC_lead_services` stores a mutable, user-facing state pair: - `pipeline_stage` (lifecycle stage; enum includes values like `Triage`, `Quote_Draft`, `Quote_Sent`,...",
+      "lines": 213,
+      "mtime": 1771358391324.1653
+    },
+    {
+      "path": "docs/agent-runtime-flow.md",
+      "title": "Agent Runtime Flow",
+      "summary": "This page describes the actual backend agent chain as implemented today. - `LeadCreated` - `LeadServiceAdded` These events try to start an initial Gatekeeper run. - `AttachmentUploaded` Image attac...",
+      "lines": 55,
+      "mtime": 1773261046166.4126
+    },
+    {
+      "path": "docs/agent-workspace-architecture.md",
+      "title": "Agent Workspace Architecture",
+      "summary": "This repository uses a convention-based file workspace model for backend agents. - Keep static agent behavior on disk in markdown workspaces. - Keep runtime data composition, typed tool contracts, ...",
+      "lines": 92,
+      "mtime": 1773310789538.2795
+    },
+    {
+      "path": "docs/agentic-backend-gap-analysis.md",
+      "title": "Backend Gap Analysis: Enterprise Agentic Workflows",
+      "summary": "**Date:** 2026-04-22 **Status:** Phase 1–3 implemented. Hardening complete. Zero legacy soft paths remain. **Current Stack:** Go 1.25, `google.golang.org/adk v0.4.0`, `google.golang.org/genai v1.43.0`",
+      "lines": 228,
+      "mtime": 1776883661815.1426
+    },
+    {
+      "path": "docs/appointment-visit-report-structured-measurements-proposal.md",
+      "title": "appointment-visit-report-structured-measurements-proposal.md",
+      "summary": "The logic behind the wizard flow in the `MeasurementStart` component contains a subtle but critical bug: it mixes reactive step calculations via an Angular `effect` with manual step advancement (`n...",
+      "lines": 889,
+      "mtime": 1774981031221.1238
+    },
+    {
+      "path": "docs/baseline_schema.sql",
+      "title": "baseline_schema.sql",
+      "summary": "-- -- PostgreSQL database dump -- -- Dumped from database version 17.7 -- Dumped by pg_dump version 18.1 SET statement_timeout = 0; SET lock_timeout = 0; SET idle_in_transaction_session_timeout = 0...",
+      "lines": 3546,
+      "mtime": 1773862127294.7263
+    },
+    {
+      "path": "docs/MIGRATIONS.md",
+      "title": "Database Migrations & Schema Management",
+      "summary": "This project uses two complementary systems: | System | Purpose | Location | |--------|---------|----------| | **Runtime migrations** | Apply DDL changes on deploy/startup | `migrations/` (001–083+) |",
+      "lines": 257,
+      "mtime": 1772807557426.2192
+    },
+    {
+      "path": "docs/photo-analysis-preprocessing-design.md",
+      "title": "Photo Analysis Preprocessing Design",
+      "summary": "Partially implemented. Currently live in the backend runtime path: - a fail-open `ImagePreprocessor` integration before `PhotoAnalyzer` - file-level image metadata extraction and best-effort EXIF c...",
+      "lines": 213,
+      "mtime": 1772978172551.6748
+    },
+    {
+      "path": "docs/workflow-engine-backend-api-contract.md",
+      "title": "Workflow Engine — Backend API Contract (M5)",
+      "summary": "This contract documents the backend API surface that frontend clients can rely on after M4 completion. It covers: - current HTTP endpoints used for workflow-related notification settings, - quote/p...",
+      "lines": 138,
+      "mtime": 1771091382232.962
+    },
+    {
+      "path": "docs/workflow-engine-backend-plan.md",
+      "title": "Workflow Engine — Backend Implementation Plan",
+      "summary": "This feature introduces a full workflow engine for notifications and commercial defaults, with: - lead-level workflow assignment (automatic + manual override), - multi-channel messaging (WhatsApp +...",
+      "lines": 289,
+      "mtime": 1771091382234.0208
+    },
+    {
+      "path": "docs/workflow-engine-frontend-integration-guide.md",
+      "title": "Workflow Engine — Frontend Integration Guide (M5)",
+      "summary": "Provide frontend teams with a safe integration path for workflow-related behavior after backend M4. Use these backend APIs for workflow configuration: - `GET /api/v1/admin/organizations/me/workflow...",
+      "lines": 82,
+      "mtime": 1771091382235.117
+    },
+    {
+      "path": "docs/workflow-engine-frontend-qa-scenarios.md",
+      "title": "Workflow Engine — Frontend QA Scenarios (M5)",
+      "summary": "Compact manual QA script for frontend validation after backend workflow-engine rollout. - Backend API + scheduler are running. - Test tenant exists with valid admin credentials. - At least one quot...",
+      "lines": 102,
+      "mtime": 1771091382235.6345
+    },
+    {
+      "path": "docs/workflow-engine-known-limitations-followups.md",
+      "title": "Workflow Engine — Known Limitations & Follow-ups (M5)",
+      "summary": "1. Workflow-engine foundation is not HTTP-exposed yet. - Tables and service logic exist, but no admin/public routes for workflow CRUD, assignment rules, lead overrides, or resolver preview. 2. Work...",
+      "lines": 38,
+      "mtime": 1771091382236.6782
+    },
+    {
+      "path": "docs/workflow-engine-rollout-migration-guide.md",
+      "title": "Workflow Engine — Migration & Rollout Guide (M5)",
+      "summary": "Roll out workflow-engine backend changes safely while preserving existing behavior for active tenants. - Migration `090_workflow_engine_foundation.sql` (additive schema only). - Runtime workflow st...",
+      "lines": 78,
+      "mtime": 1771091382237.1956
+    },
+    {
+      "path": "docs/workflow-resolver-behavior.md",
+      "title": "Workflow Resolver Behavior (M2)",
+      "summary": "This document defines how the backend resolves the effective workflow for a lead. - Service method: `ResolveLeadWorkflow` - File: `internal/identity/service/service.go` Input model: - `organization...",
+      "lines": 90,
+      "mtime": 1771091382237.7117
+    },
+    {
+      "path": "docs/workflow-runtime-sequence-behavior.md",
+      "title": "Workflow Runtime Sequence Behavior (M3)",
+      "summary": "This document describes how workflow steps are converted into outbox jobs, executed, and retried. - Step executor: component that turns workflow steps into scheduled outbox records. - Outbox: datab...",
+      "lines": 80,
+      "mtime": 1771091382238.7522
+    }
+  ]
+}
