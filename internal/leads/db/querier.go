@@ -37,7 +37,6 @@ type Querier interface {
 	CreateLead(ctx context.Context, arg CreateLeadParams) (RacLead, error)
 	CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (CreateLeadNoteRow, error)
 	CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (CreateLeadServiceRow, error)
-	CreatePhotoAnalysis(ctx context.Context, arg CreatePhotoAnalysisParams) (CreatePhotoAnalysisRow, error)
 	CreateTimelineEvent(ctx context.Context, arg CreateTimelineEventParams) (CreateTimelineEventRow, error)
 	DeleteAttachment(ctx context.Context, arg DeleteAttachmentParams) (int64, error)
 	DeleteFeedComment(ctx context.Context, arg DeleteFeedCommentParams) (int64, error)
@@ -64,7 +63,6 @@ type Querier interface {
 	GetLatestAppointmentVisitReportByService(ctx context.Context, arg GetLatestAppointmentVisitReportByServiceParams) (GetLatestAppointmentVisitReportByServiceRow, error)
 	GetLatestDraftQuoteID(ctx context.Context, arg GetLatestDraftQuoteIDParams) (pgtype.UUID, error)
 	GetLatestLeadService(ctx context.Context, arg GetLatestLeadServiceParams) (GetLatestLeadServiceRow, error)
-	GetLatestPhotoAnalysis(ctx context.Context, arg GetLatestPhotoAnalysisParams) (GetLatestPhotoAnalysisRow, error)
 	GetLeadAppointmentStats(ctx context.Context, arg GetLeadAppointmentStatsParams) (GetLeadAppointmentStatsRow, error)
 	// Leads Domain SQL Queries
 	// Add sqlc-annotated queries here as you migrate raw SQL from repository files.
@@ -78,7 +76,6 @@ type Querier interface {
 	GetLeadSummaryByPhoneOrEmail(ctx context.Context, arg GetLeadSummaryByPhoneOrEmailParams) (GetLeadSummaryByPhoneOrEmailRow, error)
 	GetLeadWhatsAppOptIn(ctx context.Context, arg GetLeadWhatsAppOptInParams) (bool, error)
 	GetPartnerOfferStatsSince(ctx context.Context, arg GetPartnerOfferStatsSinceParams) ([]GetPartnerOfferStatsSinceRow, error)
-	GetPhotoAnalysisByID(ctx context.Context, arg GetPhotoAnalysisByIDParams) (GetPhotoAnalysisByIDRow, error)
 	GetServiceStateAggregates(ctx context.Context, arg GetServiceStateAggregatesParams) (GetServiceStateAggregatesRow, error)
 	GetStaleLeadSuggestion(ctx context.Context, arg GetStaleLeadSuggestionParams) (RacStaleLeadSuggestion, error)
 	GetZipCoordinates(ctx context.Context, arg GetZipCoordinatesParams) (GetZipCoordinatesRow, error)
@@ -110,8 +107,6 @@ type Querier interface {
 	ListMentionsByComments(ctx context.Context, commentids []pgtype.UUID) ([]ListMentionsByCommentsRow, error)
 	ListNotesByService(ctx context.Context, arg ListNotesByServiceParams) ([]ListNotesByServiceRow, error)
 	ListPendingAgentApprovals(ctx context.Context, arg ListPendingAgentApprovalsParams) ([]AgentApproval, error)
-	ListPhotoAnalysesByLead(ctx context.Context, arg ListPhotoAnalysesByLeadParams) ([]ListPhotoAnalysesByLeadRow, error)
-	ListPhotoAnalysesByService(ctx context.Context, arg ListPhotoAnalysesByServiceParams) ([]ListPhotoAnalysesByServiceRow, error)
 	ListQuoteOutcomeTrend(ctx context.Context, arg ListQuoteOutcomeTrendParams) ([]ListQuoteOutcomeTrendRow, error)
 	ListQuotePipelineTrend(ctx context.Context, arg ListQuotePipelineTrendParams) ([]int64, error)
 	ListReactionsByEvent(ctx context.Context, arg ListReactionsByEventParams) ([]ListReactionsByEventRow, error)

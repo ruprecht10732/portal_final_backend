@@ -17,7 +17,6 @@ This directory is the file-based source of truth for backend agent behavior.
 
 ## Support Agents
 
-- `support/photo_analyzer/`: visual evidence extraction and discrepancy detection.
 - `support/call_logger/`: post-call note and appointment normalization.
 - `support/auditor/`: audits for visit reports and call logs.
 - `support/offer_summary/`: concise partner-offer summaries.
@@ -28,12 +27,11 @@ This directory is the file-based source of truth for backend agent behavior.
 ## Trigger Graph
 
 1. Lead creation or service creation can trigger Gatekeeper.
-2. Image attachments defer Gatekeeper until PhotoAnalyzer completes or fails.
-3. Gatekeeper can keep a service in `Nurturing`, move it to `Estimation`, or escalate to `Manual_Intervention`.
-4. `Estimation` can trigger Calculator-runtime flows.
-5. `Fulfillment` can trigger Matchmaker/Dispatcher.
-6. Visit reports and call logs can trigger Auditor.
-7. Communication surfaces can request reply agents and offer summaries on demand.
+2. Gatekeeper can keep a service in `Nurturing`, move it to `Estimation`, or escalate to `Manual_Intervention`.
+3. `Estimation` can trigger Calculator-runtime flows.
+4. `Fulfillment` can trigger Matchmaker/Dispatcher.
+5. Visit reports and call logs can trigger Auditor.
+6. Communication surfaces can request reply agents and offer summaries on demand.
 
 ## Reading Order
 

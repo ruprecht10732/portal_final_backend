@@ -144,15 +144,6 @@ type AttachmentStore interface {
 	DeleteAttachment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 }
 
-// PhotoAnalysisStore manages AI photo analyses for lead services.
-type PhotoAnalysisStore interface {
-	CreatePhotoAnalysis(ctx context.Context, params CreatePhotoAnalysisParams) (PhotoAnalysis, error)
-	GetPhotoAnalysisByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (PhotoAnalysis, error)
-	GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (PhotoAnalysis, error)
-	ListPhotoAnalysesByService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error)
-	ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error)
-}
-
 // AppointmentStatsReader provides appointment stats for RAC_leads (for scoring).
 type AppointmentStatsReader interface {
 	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)
@@ -292,7 +283,6 @@ type LeadsRepository interface {
 	AIDecisionMemoryStore
 	HumanFeedbackStore
 	AttachmentStore
-	PhotoAnalysisStore
 	ServiceTypeContextReader
 	AppointmentStatsReader
 	AppointmentVisitReportReader

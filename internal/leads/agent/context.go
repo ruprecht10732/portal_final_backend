@@ -34,20 +34,6 @@ func GetDependencies(ctx context.Context) (*ToolDependencies, error) {
 	return deps, nil
 }
 
-type photoAnalyzerDepsKey struct{}
-
-func WithPhotoAnalyzerDeps(ctx context.Context, deps *PhotoAnalyzerDeps) context.Context {
-	return context.WithValue(ctx, photoAnalyzerDepsKey{}, deps)
-}
-
-func GetPhotoAnalyzerDeps(ctx context.Context) (*PhotoAnalyzerDeps, error) {
-	deps, ok := ctx.Value(photoAnalyzerDepsKey{}).(*PhotoAnalyzerDeps)
-	if !ok || deps == nil {
-		return nil, fmt.Errorf("agent: PhotoAnalyzerDeps not found in context")
-	}
-	return deps, nil
-}
-
 type auditorDepsKey struct{}
 
 func WithAuditorDeps(ctx context.Context, deps *AuditorToolDeps) context.Context {

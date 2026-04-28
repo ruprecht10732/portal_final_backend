@@ -12,22 +12,19 @@ type confidenceResult struct {
 	RiskFlags []string
 }
 
-func calculateAnalysisConfidence(lead repository.Lead, leadQuality, recommendedAction string, missingInformation []string, photoAnalysis *repository.PhotoAnalysis) confidenceResult {
+func calculateAnalysisConfidence(lead repository.Lead, leadQuality, recommendedAction string, missingInformation []string) confidenceResult {
 	llmCertainty := confidenceFromLeadQuality(leadQuality)
 	dataCompleteness, completenessFlags := calculateLeadDataCompleteness(lead)
-	extractionReliability, extractionFlags := confidenceFromPhotoAnalysis(photoAnalysis)
 	businessValidation, validationFlags := calculateBusinessValidation(lead, recommendedAction, missingInformation)
 
 	score := clamp01(
-		0.35*llmCertainty +
-			0.25*dataCompleteness +
-			0.20*extractionReliability +
-			0.20*businessValidation,
+		0.40*llmCertainty +
+			0.35*dataCompleteness +
+			0.25*businessValidation,
 	)
 
 	riskFlags := make([]string, 0, 8)
 	riskFlags = append(riskFlags, completenessFlags...)
-	riskFlags = append(riskFlags, extractionFlags...)
 	riskFlags = append(riskFlags, validationFlags...)
 
 	if llmCertainty < 0.45 {
@@ -37,33 +34,11 @@ func calculateAnalysisConfidence(lead repository.Lead, leadQuality, recommendedA
 	return confidenceResult{
 		Score: score,
 		Breakdown: map[string]float64{
-			"llmCertainty":          llmCertainty,
-			"dataCompleteness":      dataCompleteness,
-			"extractionReliability": extractionReliability,
-			"businessValidation":    businessValidation,
+			"llmCertainty":       llmCertainty,
+			"dataCompleteness":   dataCompleteness,
+			"businessValidation": businessValidation,
 		},
 		RiskFlags: dedupeStrings(riskFlags),
-	}
-}
-
-func confidenceFromPhotoAnalysis(photoAnalysis *repository.PhotoAnalysis) (float64, []string) {
-	if photoAnalysis == nil {
-		return 0.50, []string{"no_photo_analysis"}
-	}
-
-	confidence := strings.ToLower(strings.TrimSpace(photoAnalysis.ConfidenceLevel))
-	switch confidence {
-	case "high":
-		return 0.90, nil
-	case "medium":
-		return 0.65, nil
-	case "low":
-		return 0.30, []string{"low_photo_confidence"}
-	default:
-		if len(photoAnalysis.Discrepancies) > 0 {
-			return 0.45, []string{"photo_discrepancies_present"}
-		}
-		return 0.50, []string{"unknown_photo_confidence"}
 	}
 }
 

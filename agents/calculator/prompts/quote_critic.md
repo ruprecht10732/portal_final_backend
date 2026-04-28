@@ -47,9 +47,6 @@ Notes:
 Preferences (from customer portal):
 {{ .PreferencesSummary }}
 
-Photo Analysis:
-{{ .PhotoSummary }}
-
 Scope Artifact:
 {{ .ScopeSummary }}
 

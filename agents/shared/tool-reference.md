@@ -64,17 +64,6 @@ This page complements `tool-catalog.md` with deeper contracts for the most impor
 - Purpose: Create the actual partner offer for the chosen partner.
 - Critical rule: do not move to fulfillment success without the required backend artifacts.
 
-## SavePhotoAnalysis
-
-- Used by: Photo Analyzer
-- Purpose: Persist structured photo findings that feed Gatekeeper and Calculator.
-- Critical rule: uncertain dimensions must remain uncertain; prefer onsite flags to guesses.
-
-## FlagOnsiteMeasurement
-
-- Used by: Photo Analyzer
-- Purpose: Mark pricing-critical or verification-critical dimensions that require in-person confirmation.
-
 ## SubmitAuditResult
 
 - Used by: Auditor

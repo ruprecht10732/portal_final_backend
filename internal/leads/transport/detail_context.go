@@ -2,7 +2,6 @@ package transport
 
 import (
 	appointmentstransport "portal_final_backend/internal/appointments/transport"
-	"portal_final_backend/internal/leads/repository"
 	quotestransport "portal_final_backend/internal/quotes/transport"
 )
 
@@ -37,5 +36,4 @@ type LeadDetailContextResponse struct {
 	Communications              LeadInboxCommunicationsResponse             `json:"communications"`
 	Workflow                    *LeadDetailWorkflowContext                  `json:"workflow,omitempty"`
 	CurrentServiceAnalysis      *LeadDetailAnalysisContext                  `json:"currentServiceAnalysis,omitempty"`
-	CurrentServicePhotoAnalysis *repository.PhotoAnalysis                   `json:"currentServicePhotoAnalysis,omitempty"`
 }

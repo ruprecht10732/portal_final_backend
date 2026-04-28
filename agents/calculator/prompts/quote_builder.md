@@ -94,9 +94,6 @@ Notes:
 Preferences (from customer portal):
 {{ .PreferencesSummary }}
 
-Photo Analysis:
-{{ .PhotoSummary }}
-
 Estimation Guidelines:
 {{ .EstimationContextSummary }}
 Respond ONLY with tool calls.

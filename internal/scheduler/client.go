@@ -28,7 +28,6 @@ const (
 	leadAutomationTaskUniqueTTL    = leadAutomationTaskTimeout
 	gatekeeperTaskUniqueTTL        = 45 * time.Second
 	leadAutomationTaskMaxRetry     = 3
-	autoPhotoAnalysisDelay         = 30 * time.Second
 	estimatorTaskTimeout           = 10 * time.Minute
 	estimatorTaskUniqueTTL         = estimatorTaskTimeout
 	waAgentVoiceTaskTimeout        = 5 * time.Minute
@@ -88,11 +87,6 @@ type EstimatorScheduler interface {
 
 type DispatcherScheduler interface {
 	EnqueueDispatcherRun(ctx context.Context, payload DispatcherRunPayload) error
-}
-
-type PhotoAnalysisScheduler interface {
-	EnqueuePhotoAnalysis(ctx context.Context, payload PhotoAnalysisPayload) error
-	EnqueuePhotoAnalysisIn(ctx context.Context, payload PhotoAnalysisPayload, delay time.Duration) error
 }
 
 type AuditorScheduler interface {
@@ -328,28 +322,6 @@ func (c *Client) EnqueueDispatcherRun(ctx context.Context, payload DispatcherRun
 	}
 
 	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
-	return normalizeEnqueueError(err)
-}
-
-func (c *Client) EnqueuePhotoAnalysis(ctx context.Context, payload PhotoAnalysisPayload) error {
-	return c.EnqueuePhotoAnalysisIn(ctx, payload, 0)
-}
-
-func (c *Client) EnqueuePhotoAnalysisIn(ctx context.Context, payload PhotoAnalysisPayload, delay time.Duration) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-
-	task, err := NewPhotoAnalysisTask(payload)
-	if err != nil {
-		return err
-	}
-
-	options := leadAutomationTaskOptions(c.queue)
-	if delay > 0 {
-		options = append(options, asynq.ProcessIn(delay))
-	}
-	_, err = c.client.EnqueueContext(ctx, task, options...)
 	return normalizeEnqueueError(err)
 }
 

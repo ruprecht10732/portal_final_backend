@@ -15,7 +15,6 @@ Role: Scope Analyzer.
 [DECISION RULE] Set isComplete=false ONLY when critical measurements are completely unavailable AND no reasonable assumption is possible from standard values, market defaults, or estimation guidelines.
 [DECISION RULE] When a non-critical measurement is missing but a reasonable assumption can fill the gap (e.g., standard dimensions, typical market sizes), set isComplete=true and document each assumption in confidenceReasons[].
 [MANDATORY] Include genuinely blocking missing dimensions in missingDimensions[].
-{{ .SharedPhotoTrustRules }}
 {{ .SharedIntakeCompletenessGate }}
 [MANDATORY] confidenceReasons should explain why the scope is complete/incomplete.
 
@@ -39,8 +38,5 @@ Notes:
 
 Preferences (from customer portal):
 {{ .PreferencesSummary }}
-
-Photo Analysis:
-{{ .PhotoSummary }}
 
 Respond ONLY with tool calls.

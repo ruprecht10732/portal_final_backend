@@ -48,7 +48,6 @@ import (
 // Module is the RAC_leads bounded context module implementing http.Module.
 type Module struct {
 	handler               *handler.Handler
-	photoAnalysisHandler  *handler.PhotoAnalysisHandler
 	publicHandler         *handler.PublicHandler
 	management            *management.Service
 	notes                 *notes.Service
@@ -57,7 +56,6 @@ type Module struct {
 	dispatcher            *agent.Dispatcher
 	auditor               *agent.Auditor
 	orchestrator          *Orchestrator
-	photoAnalyzer         *agent.PhotoAnalyzer
 	callLogger            *agent.CallLogger
 	quoteGenerator        agent.QuoteGenerator
 	offerSummaryGenerator *agent.OfferSummaryGenerator
@@ -83,7 +81,6 @@ type AutomationScheduler interface {
 	scheduler.GatekeeperScheduler
 	scheduler.EstimatorScheduler
 	scheduler.DispatcherScheduler
-	scheduler.PhotoAnalysisScheduler
 	scheduler.AuditorScheduler
 }
 
@@ -119,9 +116,6 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 	if m.replyAgent != nil {
 		m.replyAgent.SetOrganizationAISettingsReader(reader)
 	}
-	if m.photoAnalysisHandler != nil {
-		m.photoAnalysisHandler.SetOrganizationAISettingsReader(reader)
-	}
 	if m.staleReEngagement != nil {
 		m.staleReEngagement.SetOrganizationAISettingsReader(reader)
 	}
@@ -154,12 +148,12 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		RedisTTL:    24 * time.Hour,
 	})
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
+	callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
 	if err != nil {
 		return nil, err
 	}
 	if log != nil {
-		log.Info("leads module: agents constructed successfully", "components", "photo-analyzer,call-logger,gatekeeper,calculator,matchmaker,auditor,offer-summary,whatsapp-reply,email-reply")
+		log.Info("leads module: agents constructed successfully", "components", "call-logger,gatekeeper,calculator,matchmaker,auditor,offer-summary,whatsapp-reply,email-reply")
 	}
 
 	// SSE service for real-time notifications
@@ -195,21 +189,19 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
-	h, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
-		MgmtSvc:            mgmtSvc,
-		NotesSvc:           notesSvc,
-		Gatekeeper:         gatekeeper,
-		CallLogger:         callLogger,
-		SSEService:         sseService,
-		EventBus:           eventBus,
-		Repo:               repo,
-		StorageSvc:         storageSvc,
-		Config:             cfg,
-		Validator:          val,
-		PhotoAnalyzer:      photoAnalyzer,
-		CallLogQueue:       nil,
-		GatekeeperQueue:    nil,
-		PhotoAnalysisQueue: nil,
+	h := buildHandlers(buildHandlersDeps{
+		MgmtSvc:         mgmtSvc,
+		NotesSvc:        notesSvc,
+		Gatekeeper:      gatekeeper,
+		CallLogger:      callLogger,
+		SSEService:      sseService,
+		EventBus:        eventBus,
+		Repo:            repo,
+		StorageSvc:      storageSvc,
+		Config:          cfg,
+		Validator:       val,
+		CallLogQueue:    nil,
+		GatekeeperQueue: nil,
 	})
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
@@ -224,7 +216,6 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	module := &Module{
 		handler:               h,
-		photoAnalysisHandler:  photoAnalysisHandler,
 		publicHandler:         publicHandler,
 		management:            mgmtSvc,
 		notes:                 notesSvc,
@@ -233,7 +224,6 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		dispatcher:            dispatcher,
 		auditor:               auditor,
 		orchestrator:          orchestrator,
-		photoAnalyzer:         photoAnalyzer,
 		callLogger:            callLogger,
 		quoteGenerator:        quoteGenerator,
 		offerSummaryGenerator: offerSummaryGenerator,
@@ -310,9 +300,6 @@ func (m *Module) VerifyWiring() error {
 	if m.handler == nil {
 		return fmt.Errorf("leads module: handler is not configured")
 	}
-	if m.photoAnalysisHandler == nil {
-		return fmt.Errorf("leads module: photo analysis handler is not configured")
-	}
 	if m.orchestrator == nil {
 		return fmt.Errorf("leads module: orchestrator is not configured")
 	}
@@ -322,20 +309,15 @@ func (m *Module) VerifyWiring() error {
 	return nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.ReplyAgent, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.ReplyAgent, error) {
 	_ = storageSvc
 	if err := validateAgentConfiguration(); err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveVisionModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo, sessionService)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(
@@ -343,12 +325,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		repo, eventBus, scorer, sessionService,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	aiClients := buildAIClients(cfg)
@@ -364,12 +346,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	}, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
@@ -383,20 +365,20 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	}, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false), sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	replyAgent, err := buildReplyAgents(cfg, repo, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, nil
+	return callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, nil
 }
 
 type aiClients struct {
@@ -426,22 +408,6 @@ func buildAIClients(cfg *config.Config) aiClients {
 // combining the active provider preset with any per-agent model override.
 func resolveAgentModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
 	providerCfg, modelOverride := cfg.ResolveAgentModel(agentName)
-	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
-}
-
-// resolveVisionModelConfig is like resolveAgentModelConfig but ensures the
-// resolved provider supports vision (multimodal image input). If the primary
-// provider lacks vision support the first vision-capable provider with a
-// configured API key is used instead. This is required for photo analysis
-// which sends image_url content parts that non-vision providers reject.
-func resolveVisionModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
-	providerCfg, modelOverride := cfg.ResolveAgentModel(agentName)
-	if !config.ProviderSupportsVision(providerCfg.Provider) {
-		if visionCfg, ok := cfg.ResolveVisionProvider(); ok {
-			providerCfg = visionCfg
-			modelOverride = "" // override doesn't apply cross-provider
-		}
-	}
 	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
 }
 
@@ -568,10 +534,6 @@ func shouldSkipInitialGatekeeper(ctx context.Context, repo repository.LeadsRepos
 		log.Info("gatekeeper: skipping initial run for unsupported stage", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "stage", service.PipelineStage, "source", trigger.Source)
 		return true
 	}
-	if attachments, attErr := repo.ListAttachmentsByService(ctx, trigger.ServiceID, trigger.TenantID); attErr == nil && hasImageAttachments(attachments) {
-		log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
-		return true
-	}
 	return false
 }
 
@@ -592,15 +554,6 @@ func enqueueGatekeeperRun(ctx context.Context, repo repository.LeadsRepository, 
 	})
 }
 
-func hasImageAttachments(items []repository.Attachment) bool {
-	for _, att := range items {
-		if att.ContentType != nil && isImageContentType(*att.ContentType) {
-			return true
-		}
-	}
-	return false
-}
-
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorEvents(eventBus, orchestrator)
 }
@@ -616,27 +569,6 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 			return nil
 		}
 
-		// 2. Trigger photo analysis for images
-		if !isImageContentType(e.ContentType) {
-			return nil
-		}
-		if module == nil || module.photoAnalysisHandler == nil {
-			log.Warn("photo analysis handler not configured")
-			return nil
-		}
-
-		// Terminal check: don't analyze photos for terminal services
-		service, err := repo.GetLeadServiceByID(ctx, e.LeadServiceID, e.TenantID)
-		if err != nil {
-			log.Error("photo batcher: failed to load service", "error", err, "serviceId", e.LeadServiceID)
-			return nil
-		}
-		if domain.IsTerminal(service.Status, service.PipelineStage) {
-			log.Info("photo batcher: skipping terminal service", "serviceId", e.LeadServiceID)
-			return nil
-		}
-
-		queueOrRunPhotoAnalysis(ctx, module, log, e.LeadID, e.LeadServiceID, e.TenantID)
 		return nil
 	}))
 }
@@ -682,43 +614,23 @@ func createAttachmentFromEvent(ctx context.Context, repo repository.LeadsReposit
 	return err
 }
 
-func queueOrRunPhotoAnalysis(ctx context.Context, module *Module, log *logger.Logger, leadID, serviceID, tenantID uuid.UUID) {
-	if module != nil && module.automationQueue != nil {
-		if err := module.automationQueue.EnqueuePhotoAnalysisIn(ctx, scheduler.PhotoAnalysisPayload{
-			TenantID:      tenantID.String(),
-			LeadID:        leadID.String(),
-			LeadServiceID: serviceID.String(),
-		}, 30*time.Second); err != nil {
-			log.Error("photo analysis queue enqueue failed", "error", err, "leadId", leadID, "serviceId", serviceID)
-		}
-		return
-	}
-	if log != nil {
-		log.Error("photo analysis queue not configured", "leadId", leadID, "serviceId", serviceID)
-	}
-}
-
 type buildHandlersDeps struct {
-	MgmtSvc            *management.Service
-	NotesSvc           *notes.Service
-	Gatekeeper         *agent.Gatekeeper
-	CallLogger         *agent.CallLogger
-	SSEService         *sse.Service
-	EventBus           events.Bus
-	Repo               repository.LeadsRepository
-	StorageSvc         storage.StorageService
-	Config             *config.Config
-	Validator          *validator.Validator
-	PhotoAnalyzer      *agent.PhotoAnalyzer
-	CallLogQueue       scheduler.CallLogScheduler
-	GatekeeperQueue    scheduler.GatekeeperScheduler
-	PhotoAnalysisQueue scheduler.PhotoAnalysisScheduler
+	MgmtSvc         *management.Service
+	NotesSvc        *notes.Service
+	Gatekeeper      *agent.Gatekeeper
+	CallLogger      *agent.CallLogger
+	SSEService      *sse.Service
+	EventBus        events.Bus
+	Repo            repository.LeadsRepository
+	StorageSvc      storage.StorageService
+	Config          *config.Config
+	Validator       *validator.Validator
+	CallLogQueue    scheduler.CallLogScheduler
+	GatekeeperQueue scheduler.GatekeeperScheduler
 }
 
-func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.PhotoAnalysisHandler) {
-	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator, deps.EventBus)
-	photoAnalysisHandler.SetPhotoAnalysisScheduler(deps.PhotoAnalysisQueue)
-	h := handler.New(handler.HandlerDeps{
+func buildHandlers(deps buildHandlersDeps) *handler.Handler {
+	return handler.New(handler.HandlerDeps{
 		Mgmt:              deps.MgmtSvc,
 		NotesSvc:          deps.NotesSvc,
 		Gatekeeper:        deps.Gatekeeper,
@@ -732,8 +644,6 @@ func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.PhotoAnal
 		Storage:           deps.StorageSvc,
 		AttachmentsBucket: deps.Config.GetMinioBucketLeadServiceAttachments(),
 	})
-
-	return h, photoAnalysisHandler
 }
 
 // Name returns the module identifier.
@@ -754,11 +664,6 @@ func (m *Module) NotesService() *notes.Service {
 // CallLogger returns the call logger agent for external use.
 func (m *Module) CallLogger() *agent.CallLogger {
 	return m.callLogger
-}
-
-// PhotoAnalyzer returns the photo analyzer agent for external use.
-func (m *Module) PhotoAnalyzer() *agent.PhotoAnalyzer {
-	return m.photoAnalyzer
 }
 
 // SSE returns the SSE service for external use.
@@ -807,9 +712,6 @@ func (m *Module) SetAutomationScheduler(queue AutomationScheduler) {
 	m.automationQueue = queue
 	if m.handler != nil {
 		m.handler.SetGatekeeperScheduler(queue)
-	}
-	if m.photoAnalysisHandler != nil {
-		m.photoAnalysisHandler.SetPhotoAnalysisScheduler(queue)
 	}
 	if m.orchestrator != nil {
 		m.orchestrator.SetAutomationScheduler(queue)
@@ -910,13 +812,6 @@ func (m *Module) ProcessDispatcherRun(ctx context.Context, leadID, serviceID, te
 	return err
 }
 
-func (m *Module) ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error {
-	if m == nil || m.photoAnalysisHandler == nil {
-		return nil
-	}
-	return m.photoAnalysisHandler.ProcessPhotoAnalysisJob(ctx, leadID, serviceID, tenantID, userID, contextInfo)
-}
-
 func (m *Module) ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error {
 	if m == nil || m.auditor == nil {
 		return nil
@@ -1014,10 +909,6 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	m.handler.RegisterRoutes(leadsGroup)
 	adminLeadsGroup := ctx.Admin.Group("/leads")
 	m.handler.RegisterAdminRoutes(adminLeadsGroup)
-
-	// Photo analysis routes: /RAC_leads/:id/services/:serviceId/...
-	photoAnalysisGroup := leadsGroup.Group("/:id/services/:serviceId")
-	m.photoAnalysisHandler.RegisterRoutes(photoAnalysisGroup)
 
 	// SSE endpoint for real-time notifications (user-specific)
 	ctx.Protected.GET("/events", m.sseHandler())

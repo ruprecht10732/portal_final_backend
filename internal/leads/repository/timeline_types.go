@@ -28,7 +28,6 @@ const (
 	ActorNameStateReconciler = "StateReconciler"
 	ActorNameLoopDetector    = "LoopDetector"
 	ActorNameKlant           = "Klant"              // Customer self-service via public portal
-	ActorNamePhotoAnalysis   = "Foto-analyse Agent" // Photo analysis AI agent
 )
 
 // EventType constants identify the nature of a timeline event.
@@ -47,7 +46,6 @@ const (
 	EventTypeServiceTypeChange      = "service_type_change"
 	EventTypeLeadUpdate             = "lead_update"
 	EventTypePartnerSearch          = "partner_search"
-	EventTypePhotoAnalysisCompleted = "photo_analysis_completed"
 	EventTypeVisitCompleted         = "visit_completed"
 )
 
@@ -59,7 +57,6 @@ const (
 	EventTitleStageUpdated           = "Fase bijgewerkt"
 	EventTitleAutoDisqualified       = "Auto-Disqualified"
 	EventTitleDispatcherFailed       = "Partner matching mislukt"
-	EventTitlePhotoAnalysisFailed    = "Foto-analyse mislukt"
 	EventTitleManualIntervention     = "Handmatige interventie vereist"
 	EventTitleAILoopDetected         = "AI-lus gedetecteerd"
 	EventTitleQuoteAccepted          = "Offerte Geaccepteerd"
@@ -76,7 +73,6 @@ const (
 	EventTitlePreferencesUpdated     = "Voorkeuren bijgewerkt"
 	EventTitleCustomerInfo           = "Klant update"
 	EventTitleAppointmentRequested   = "Inspectie aangevraagd"
-	EventTitlePhotoAnalysisCompleted = "Foto-analyse voltooid"
 )
 
 // TimelineVisibility constants control whether an event is shown in the default timeline.

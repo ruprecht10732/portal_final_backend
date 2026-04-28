@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	leadagent "portal_final_backend/internal/leads/agent"
 	leadhandler "portal_final_backend/internal/leads/handler"
@@ -45,12 +44,6 @@ func (testAutomationScheduler) EnqueueEstimatorRun(context.Context, scheduler.Es
 func (testAutomationScheduler) EnqueueDispatcherRun(context.Context, scheduler.DispatcherRunPayload) error {
 	return nil
 }
-func (testAutomationScheduler) EnqueuePhotoAnalysis(context.Context, scheduler.PhotoAnalysisPayload) error {
-	return nil
-}
-func (testAutomationScheduler) EnqueuePhotoAnalysisIn(context.Context, scheduler.PhotoAnalysisPayload, time.Duration) error {
-	return nil
-}
 func (testAutomationScheduler) EnqueueAuditVisitReport(context.Context, scheduler.AuditVisitReportPayload) error {
 	return nil
 }
@@ -63,11 +56,10 @@ func TestVerifyWiringFailsWhenAppointmentBookerMissing(t *testing.T) {
 	callLogger.SetLeadUpdater(testLeadUpdater{})
 
 	module := &Module{
-		callLogger:           callLogger,
-		automationQueue:      testAutomationScheduler{},
-		handler:              &leadhandler.Handler{},
-		photoAnalysisHandler: &leadhandler.PhotoAnalysisHandler{},
-		orchestrator:         &Orchestrator{},
+		callLogger:      callLogger,
+		automationQueue: testAutomationScheduler{},
+		handler:         &leadhandler.Handler{},
+		orchestrator:    &Orchestrator{},
 	}
 
 	err := module.VerifyWiring()
@@ -85,11 +77,10 @@ func TestVerifyWiringSucceedsWhenRequiredDependenciesPresent(t *testing.T) {
 	callLogger.SetAppointmentBooker(testAppointmentBooker{})
 
 	module := &Module{
-		callLogger:           callLogger,
-		automationQueue:      testAutomationScheduler{},
-		handler:              &leadhandler.Handler{},
-		photoAnalysisHandler: &leadhandler.PhotoAnalysisHandler{},
-		orchestrator:         &Orchestrator{},
+		callLogger:      callLogger,
+		automationQueue: testAutomationScheduler{},
+		handler:         &leadhandler.Handler{},
+		orchestrator:    &Orchestrator{},
 	}
 
 	if err := module.VerifyWiring(); err != nil {

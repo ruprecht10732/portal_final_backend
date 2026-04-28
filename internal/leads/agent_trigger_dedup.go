@@ -59,7 +59,6 @@ type estimatorTriggerFingerprintRepo interface {
 	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.Lead, error)
 	GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
 	ListNotesByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]repository.LeadNote, error)
-	GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (repository.PhotoAnalysis, error)
 	GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (repository.AIAnalysis, error)
 }
 
@@ -75,7 +74,6 @@ type estimatorTriggerSnapshot struct {
 	Lead     gatekeeperLeadSnapshot     `json:"lead"`
 	Service  estimatorServiceSnapshot   `json:"service"`
 	Notes    []gatekeeperNoteSnapshot   `json:"notes,omitempty"`
-	Photo    *gatekeeperPhotoSnapshot   `json:"photo,omitempty"`
 	Analysis *estimatorAnalysisSnapshot `json:"analysis,omitempty"`
 }
 
@@ -216,13 +214,6 @@ func buildEstimatorTriggerFingerprint(ctx context.Context, repo estimatorTrigger
 		return "", err
 	}
 
-	var photo *repository.PhotoAnalysis
-	if current, photoErr := repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); photoErr == nil {
-		photo = &current
-	} else if photoErr != repository.ErrPhotoAnalysisNotFound {
-		return "", photoErr
-	}
-
 	var analysis *repository.AIAnalysis
 	if current, analysisErr := repo.GetLatestAIAnalysis(ctx, serviceID, tenantID); analysisErr == nil {
 		analysis = &current
@@ -252,7 +243,6 @@ func buildEstimatorTriggerFingerprint(ctx context.Context, repo estimatorTrigger
 			CustomerPreferences: normalizePreferencesJSON(service.CustomerPreferences),
 		},
 		Notes:    summarizeGatekeeperNotes(notes),
-		Photo:    summarizeGatekeeperPhoto(photo),
 		Analysis: summarizeEstimatorAnalysis(analysis),
 	}
 

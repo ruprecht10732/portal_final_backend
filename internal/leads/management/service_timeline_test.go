@@ -18,9 +18,9 @@ func TestBuildTimelineItemsHidesDebugEvents(t *testing.T) {
 			ID:         uuid.New(),
 			ServiceID:  &serviceID,
 			ActorType:  repository.ActorTypeAI,
-			ActorName:  repository.ActorNamePhotoAnalysis,
-			EventType:  repository.EventTypePhotoAnalysisCompleted,
-			Title:      repository.EventTitlePhotoAnalysisCompleted,
+			ActorName:  repository.ActorNameGatekeeper,
+			EventType:  repository.EventTypeAnalysis,
+			Title:      repository.EventTitleGatekeeperAnalysis,
 			Visibility: repository.TimelineVisibilityDebug,
 			CreatedAt:  now,
 		},
@@ -30,7 +30,7 @@ func TestBuildTimelineItemsHidesDebugEvents(t *testing.T) {
 			ActorType:  repository.ActorTypeSystem,
 			ActorName:  repository.ActorNameOrchestrator,
 			EventType:  repository.EventTypeAlert,
-			Title:      repository.EventTitlePhotoAnalysisFailed,
+			Title:      repository.EventTitleManualIntervention,
 			Visibility: repository.TimelineVisibilityPublic,
 			CreatedAt:  now.Add(-time.Minute),
 		},
@@ -39,7 +39,7 @@ func TestBuildTimelineItemsHidesDebugEvents(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 visible timeline item, got %d", len(items))
 	}
-	if items[0].Title != repository.EventTitlePhotoAnalysisFailed {
+	if items[0].Title != repository.EventTitleManualIntervention {
 		t.Fatalf("expected non-debug alert to remain visible, got %q", items[0].Title)
 	}
 }

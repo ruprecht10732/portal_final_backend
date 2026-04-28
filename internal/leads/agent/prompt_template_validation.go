@@ -20,7 +20,6 @@ func ValidatePromptTemplates() error {
 			data: gatekeeperPromptTemplateData{
 				ExecutionContract:         "execution",
 				CommunicationContract:     "communication",
-				SharedPhotoTrustRules:     "photo trust",
 				PreferredChannel:          "WhatsApp",
 				RecoveryModeSection:       "recovery",
 				CycleAwarenessSection:     "cycle awareness",
@@ -35,7 +34,6 @@ func ValidatePromptTemplates() error {
 				NotesSection:              "notes",
 				VisitReportSummary:        "visit report",
 				PreferencesSummary:        "preferences",
-				PhotoSummary:              "photo summary",
 				PreviousEstimatorBlockers: "blockers",
 				KnownFacts:                "known facts",
 				AttachmentAwareness:       "attachments",
@@ -49,7 +47,6 @@ func ValidatePromptTemplates() error {
 			tmpl: scopeAnalyzerPromptTemplate,
 			data: struct {
 				ExecutionContract            string
-				SharedPhotoTrustRules        string
 				SharedIntakeCompletenessGate string
 				LeadID                       uuid.UUID
 				ServiceID                    uuid.UUID
@@ -58,8 +55,7 @@ func ValidatePromptTemplates() error {
 				ServiceNoteSummary           string
 				NotesSection                 string
 				PreferencesSummary           string
-				PhotoSummary                 string
-			}{"execution", "photo trust", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "note", "notes", "prefs", "photo"},
+			}{"execution", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "note", "notes", "prefs"},
 		},
 		{
 			name: "quote-builder",
@@ -69,7 +65,6 @@ func ValidatePromptTemplates() error {
 				ScopeSummary                 string
 				SharedProductSelectionRules  string
 				SharedMathExamples           string
-				SharedPhotoTrustRules        string
 				SharedIntakeCompletenessGate string
 				LeadID                       uuid.UUID
 				ServiceID                    uuid.UUID
@@ -81,9 +76,8 @@ func ValidatePromptTemplates() error {
 				ServiceNoteSummary           string
 				NotesSection                 string
 				PreferencesSummary           string
-				PhotoSummary                 string
 				EstimationContextSummary     string
-			}{"execution", "scope", "product rules", "math examples", "photo trust", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "2026-03-11T10:00:00Z", "consumer", "location", "note", "notes", "prefs", "photo", "guidelines"},
+			}{"execution", "scope", "product rules", "math examples", "intake gate", uuid.New(), uuid.New(), "service", "Estimation", "2026-03-11T10:00:00Z", "consumer", "location", "note", "notes", "prefs", "guidelines"},
 		},
 		{
 			name: "investigative",
@@ -99,10 +93,9 @@ func ValidatePromptTemplates() error {
 				ServiceNoteSummary       string
 				NotesSection             string
 				PreferencesSummary       string
-				PhotoSummary             string
 				HouseContextSummary      string
 				EstimationContextSummary string
-			}{"execution", "communication", "- missing", "WhatsApp", uuid.New(), uuid.New(), "service", "note", "notes", "prefs", "photo", "house", "estimation"},
+			}{"execution", "communication", "- missing", "WhatsApp", uuid.New(), uuid.New(), "service", "note", "notes", "prefs", "house", "estimation"},
 		},
 		{
 			name: "dispatcher",
@@ -140,11 +133,10 @@ func ValidatePromptTemplates() error {
 				ServiceNoteSummary       string
 				NotesSection             string
 				PreferencesSummary       string
-				PhotoSummary             string
 				ScopeSummary             string
 				EstimationContextSummary string
 				DraftJSON                string
-			}{"execution", uuid.New(), uuid.New(), uuid.New(), "Q-1", "service", "consumer", "location", "note", "notes", "prefs", "photo", "scope", "estimation", "{}"},
+			}{"execution", uuid.New(), uuid.New(), uuid.New(), "Q-1", "service", "consumer", "location", "note", "notes", "prefs", "scope", "estimation", "{}"},
 		},
 		{
 			name: "quote-repair",
@@ -160,26 +152,13 @@ func ValidatePromptTemplates() error {
 				ServiceNoteSummary       string
 				NotesSection             string
 				PreferencesSummary       string
-				PhotoSummary             string
 				ScopeSummary             string
 				EstimationContextSummary string
 				DraftJSON                string
 				CritiqueJSON             string
-			}{"execution", uuid.New(), uuid.New(), "service", 1, "consumer", "location", "note", "notes", "prefs", "photo", "scope", "estimation", "{}", "{}"},
+			}{"execution", uuid.New(), uuid.New(), "service", 1, "consumer", "location", "note", "notes", "prefs", "scope", "estimation", "{}", "{}"},
 		},
-		{
-			name: "photo-analysis",
-			tmpl: photoAnalysisPromptTemplate,
-			data: struct {
-				PhotoCount                int
-				LeadID                    string
-				ServiceID                 string
-				PreprocessingSection      string
-				ServiceTypeSection        string
-				IntakeRequirementsSection string
-				ContextInfoSection        string
-			}{2, uuid.NewString(), uuid.NewString(), "pre", "service", "intake", "context"},
-		},
+
 	}
 
 	for _, validation := range validations {

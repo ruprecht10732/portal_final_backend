@@ -138,7 +138,6 @@ type trustedAnalysisContext struct {
 	service       *repository.LeadService
 	priorAnalysis *repository.AIAnalysis
 	visitReport   *repository.AppointmentVisitReport
-	photoAnalysis *repository.PhotoAnalysis
 	attachments   []repository.Attachment
 }
 
@@ -165,9 +164,6 @@ func loadTrustedAnalysisContext(ctx context.Context, deps *ToolDependencies, ten
 	if report, err := deps.Repo.GetLatestAppointmentVisitReportByService(ctx, leadServiceID, tenantID); err == nil {
 		trusted.visitReport = report
 	}
-	if photoAnalysis, err := deps.Repo.GetLatestPhotoAnalysis(ctx, leadServiceID, tenantID); err == nil {
-		trusted.photoAnalysis = &photoAnalysis
-	}
 	if attachments, err := deps.Repo.ListAttachmentsByService(ctx, leadServiceID, tenantID); err == nil {
 		trusted.attachments = attachments
 	}
@@ -180,7 +176,6 @@ func populateAnalysisFacts(ctx context.Context, deps *ToolDependencies, lead rep
 	mergeLeadFacts(&collector, lead)
 	mergeServiceFacts(&collector, trusted.service)
 	mergeVisitReportFacts(&collector, trusted.visitReport)
-	mergePhotoAnalysisFacts(&collector, trusted.photoAnalysis)
 	mergeAttachmentFacts(&collector, trusted.attachments)
 	mergePriorAnalysisFacts(&collector, trusted.priorAnalysis)
 	return collector.resolvedValues(), collector.extractedFactMap()
@@ -326,38 +321,6 @@ func mergeVisitReportFacts(collector *analysisFactCollector, visitReport *reposi
 	collector.addFact("visit_report_notes", trustedOptionalString(visitReport.Notes))
 }
 
-func mergePhotoAnalysisFacts(collector *analysisFactCollector, photoAnalysis *repository.PhotoAnalysis) {
-	if photoAnalysis == nil {
-		return
-	}
-	collector.addFact("photo_summary", strings.TrimSpace(photoAnalysis.Summary))
-	collector.addFact("photo_scope_assessment", strings.TrimSpace(photoAnalysis.ScopeAssessment))
-	collector.addFact("photo_measurements", summarizePhotoMeasurements(photoAnalysis.Measurements))
-	collector.addFact("photo_ocr_text", strings.Join(compactPromptList(photoAnalysis.ExtractedText), "; "))
-	collector.addFact("photo_needs_onsite_measurement", strings.Join(compactPromptList(photoAnalysis.NeedsOnsiteMeasurement), "; "))
-}
-
-func summarizePhotoMeasurements(measurements []repository.Measurement) string {
-	if len(measurements) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(measurements))
-	for _, measurement := range measurements {
-		description := strings.TrimSpace(measurement.Description)
-		unit := strings.TrimSpace(measurement.Unit)
-		if description == "" {
-			description = "maat"
-		}
-		value := strconv.FormatFloat(measurement.Value, 'f', -1, 64)
-		segment := description + ": " + value
-		if unit != "" {
-			segment += " " + unit
-		}
-		parts = append(parts, segment)
-	}
-	return strings.Join(parts, "; ")
-}
-
 func mergeAttachmentFacts(collector *analysisFactCollector, attachments []repository.Attachment) {
 	if len(attachments) == 0 {
 		return
@@ -443,12 +406,7 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 		meta.ExtractedFacts = extractedFacts
 	}
 
-	var photoAnalysis *repository.PhotoAnalysis
-	if pa, paErr := deps.Repo.GetLatestPhotoAnalysis(ctx, leadServiceID, tenantID); paErr == nil {
-		photoAnalysis = &pa
-	}
-
-	confidence := calculateAnalysisConfidence(lead, leadQuality, recommendedAction, missingInformation, photoAnalysis)
+	confidence := calculateAnalysisConfidence(lead, leadQuality, recommendedAction, missingInformation)
 	meta.CompositeConfidence = confidence.Score
 	meta.ConfidenceBreakdown = confidence.Breakdown
 	meta.RiskFlags = confidence.RiskFlags

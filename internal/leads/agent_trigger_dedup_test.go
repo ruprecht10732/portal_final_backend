@@ -15,7 +15,6 @@ type estimatorFingerprintRepoStub struct {
 	lead     repository.Lead
 	service  repository.LeadService
 	notes    []repository.LeadNote
-	photo    *repository.PhotoAnalysis
 	analysis *repository.AIAnalysis
 }
 
@@ -29,13 +28,6 @@ func (s *estimatorFingerprintRepoStub) GetLeadServiceByID(_ context.Context, _ u
 
 func (s *estimatorFingerprintRepoStub) ListNotesByService(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID) ([]repository.LeadNote, error) {
 	return append([]repository.LeadNote(nil), s.notes...), nil
-}
-
-func (s *estimatorFingerprintRepoStub) GetLatestPhotoAnalysis(_ context.Context, _ uuid.UUID, _ uuid.UUID) (repository.PhotoAnalysis, error) {
-	if s.photo == nil {
-		return repository.PhotoAnalysis{}, repository.ErrPhotoAnalysisNotFound
-	}
-	return *s.photo, nil
 }
 
 func (s *estimatorFingerprintRepoStub) GetLatestAIAnalysis(_ context.Context, _ uuid.UUID, _ uuid.UUID) (repository.AIAnalysis, error) {

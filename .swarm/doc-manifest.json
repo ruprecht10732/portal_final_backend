@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scanned_at": "2026-04-27T13:40:48.856Z",
+  "scanned_at": "2026-04-28T15:54:47.518Z",
   "files": [
     {
       "path": ".github/workflows/agent-eval.yml",
@@ -20,8 +20,8 @@
       "path": "agents/README.md",
       "title": "Agent Workspace Index",
       "summary": "This directory is the file-based source of truth for backend agent behavior. - Give humans and AI systems one navigable entry point into the lead automation stack. - Keep static behavior, trigger d...",
-      "lines": 58,
-      "mtime": 1773389414057.494
+      "lines": 56,
+      "mtime": 1777379987076.5337
     },
     {
       "path": "agents/shared/CHANGELOG.md",
@@ -99,13 +99,6 @@
       "summary": "This project uses two complementary systems: | System | Purpose | Location | |--------|---------|----------| | **Runtime migrations** | Apply DDL changes on deploy/startup | `migrations/` (001–083+) |",
       "lines": 257,
       "mtime": 1772807557426.2192
-    },
-    {
-      "path": "docs/photo-analysis-preprocessing-design.md",
-      "title": "Photo Analysis Preprocessing Design",
-      "summary": "Partially implemented. Currently live in the backend runtime path: - a fail-open `ImagePreprocessor` integration before `PhotoAnalyzer` - file-level image metadata extraction and best-effort EXIF c...",
-      "lines": 213,
-      "mtime": 1772978172551.6748
     },
     {
       "path": "docs/workflow-engine-backend-api-contract.md",

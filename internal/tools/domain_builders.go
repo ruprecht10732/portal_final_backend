@@ -139,14 +139,6 @@ func NewCancelVisitTool[In any, Out any](handler func(tool.Context, In) (Out, er
 	return newDomainTool("CancelVisit", "Cancels the existing lead visit appointment.", confirmation.WrapToolHandler("CancelVisit", handler))
 }
 
-func NewSavePhotoAnalysisTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("SavePhotoAnalysis", "Save the analysis of photos for a lead service. Call this after analyzing all photos. Include measurements, discrepancies, extracted text, and suggested search terms.", handler)
-}
-
-func NewFlagOnsiteMeasurementTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("FlagOnsiteMeasurement", "Flag that a specific measurement cannot be determined from photos alone and requires on-site measurement. Call this for EACH measurement that needs on-site verification.", handler)
-}
-
 func NewSubmitAuditResultTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("SubmitAuditResult", "Submit the audit result. If required info is missing, flag Manual_Intervention and explain what is missing.", handler)
 }

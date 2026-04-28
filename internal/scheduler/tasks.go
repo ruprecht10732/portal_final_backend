@@ -20,7 +20,6 @@ const TaskGeneratePartnerOfferPDF = "partners.offer.generate_pdf"
 const TaskRunGatekeeper = "leads.gatekeeper.run"
 const TaskRunEstimator = "leads.estimator.run"
 const TaskRunDispatcher = "leads.dispatcher.run"
-const TaskAnalyzePhotos = "leads.photo_analysis.run"
 const TaskAuditVisitReport = "leads.audit.visit_report"
 const TaskAuditCallLog = "leads.audit.call_log"
 const TaskWAAgentVoiceTranscription = "whatsappagent.voice_transcription.run"
@@ -127,14 +126,6 @@ type DispatcherRunPayload struct {
 	LeadID        string `json:"leadId"`
 	LeadServiceID string `json:"leadServiceId"`
 	Fingerprint   string `json:"fingerprint,omitempty"`
-}
-
-type PhotoAnalysisPayload struct {
-	TenantID      string  `json:"tenantId"`
-	LeadID        string  `json:"leadId"`
-	LeadServiceID string  `json:"leadServiceId"`
-	UserID        *string `json:"userId,omitempty"`
-	ContextInfo   string  `json:"contextInfo,omitempty"`
 }
 
 type AuditVisitReportPayload struct {
@@ -395,22 +386,6 @@ func ParseDispatcherRunPayload(task *asynq.Task) (DispatcherRunPayload, error) {
 	var payload DispatcherRunPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return DispatcherRunPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewPhotoAnalysisTask(payload PhotoAnalysisPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskAnalyzePhotos, data), nil
-}
-
-func ParsePhotoAnalysisPayload(task *asynq.Task) (PhotoAnalysisPayload, error) {
-	var payload PhotoAnalysisPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return PhotoAnalysisPayload{}, err
 	}
 	return payload, nil
 }

@@ -47,14 +47,6 @@ func (q *queueUniqueGatekeeperScheduler) EnqueueDispatcherRun(context.Context, s
 	return nil
 }
 
-func (q *queueUniqueGatekeeperScheduler) EnqueuePhotoAnalysis(context.Context, scheduler.PhotoAnalysisPayload) error {
-	return nil
-}
-
-func (q *queueUniqueGatekeeperScheduler) EnqueuePhotoAnalysisIn(context.Context, scheduler.PhotoAnalysisPayload, time.Duration) error {
-	return nil
-}
-
 func (q *queueUniqueGatekeeperScheduler) EnqueueAuditVisitReport(context.Context, scheduler.AuditVisitReportPayload) error {
 	return nil
 }
@@ -68,7 +60,6 @@ type gatekeeperFingerprintRepoStub struct {
 	service     repository.LeadService
 	notes       []repository.LeadNote
 	attachments []repository.Attachment
-	photo       *repository.PhotoAnalysis
 	visitReport *repository.AppointmentVisitReport
 }
 
@@ -86,13 +77,6 @@ func (s *gatekeeperFingerprintRepoStub) ListNotesByService(_ context.Context, _ 
 
 func (s *gatekeeperFingerprintRepoStub) ListAttachmentsByService(_ context.Context, _ uuid.UUID, _ uuid.UUID) ([]repository.Attachment, error) {
 	return append([]repository.Attachment(nil), s.attachments...), nil
-}
-
-func (s *gatekeeperFingerprintRepoStub) GetLatestPhotoAnalysis(_ context.Context, _ uuid.UUID, _ uuid.UUID) (repository.PhotoAnalysis, error) {
-	if s.photo == nil {
-		return repository.PhotoAnalysis{}, repository.ErrPhotoAnalysisNotFound
-	}
-	return *s.photo, nil
 }
 
 func (s *gatekeeperFingerprintRepoStub) GetLatestAppointmentVisitReportByService(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*repository.AppointmentVisitReport, error) {

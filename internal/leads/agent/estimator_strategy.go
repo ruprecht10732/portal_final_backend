@@ -24,7 +24,7 @@ type estimatorCouncilAdvice struct {
 	Signals          []string
 }
 
-func chooseEstimatorReasoningMode(settings ports.OrganizationAISettings, analysis *repository.AIAnalysis, photo *repository.PhotoAnalysis) estimatorReasoningMode {
+func chooseEstimatorReasoningMode(settings ports.OrganizationAISettings, analysis *repository.AIAnalysis) estimatorReasoningMode {
 	if !settings.AIAdaptiveReasoning {
 		return reasoningModeBalanced
 	}
@@ -42,9 +42,7 @@ func chooseEstimatorReasoningMode(settings ports.OrganizationAISettings, analysi
 		return reasoningModeDeliberate
 	}
 	if missingCount == 0 && confidence >= 0.75 {
-		if photo == nil || strings.EqualFold(strings.TrimSpace(photo.ConfidenceLevel), "High") {
-			return reasoningModeFast
-		}
+		return reasoningModeFast
 	}
 	return reasoningModeBalanced
 }
@@ -201,14 +199,13 @@ func buildCouncilSection(advice estimatorCouncilAdvice) string {
 	return fmt.Sprintf("=== MULTI-AGENT COUNCIL ===\nRecommended stage: %s\nSignals: %s\nWarnings: %s", advice.RecommendedStage, signals, warnings)
 }
 
-func runEstimatorCouncil(analysis *repository.AIAnalysis, photo *repository.PhotoAnalysis, notes []repository.LeadNote) estimatorCouncilAdvice {
+func runEstimatorCouncil(analysis *repository.AIAnalysis, notes []repository.LeadNote) estimatorCouncilAdvice {
 	advice := estimatorCouncilAdvice{RecommendedStage: "Estimation"}
 	if analysis == nil {
 		return advice
 	}
 
 	applyAnalysisSignals(&advice, analysis)
-	applyPhotoSignals(&advice, photo)
 
 	noteSignals := countUncertainNoteSignals(notes)
 	if noteSignals > 0 {
@@ -233,19 +230,6 @@ func applyAnalysisSignals(advice *estimatorCouncilAdvice, analysis *repository.A
 		if *analysis.CompositeConfidence < 0.45 {
 			advice.RecommendedStage = "Nurturing"
 			advice.Warnings = append(advice.Warnings, "Confidence below estimation guardrail")
-		}
-	}
-}
-
-func applyPhotoSignals(advice *estimatorCouncilAdvice, photo *repository.PhotoAnalysis) {
-	if photo != nil {
-		relevance := strings.TrimSpace(photo.ConfidenceLevel)
-		if relevance == "" {
-			relevance = "Unknown"
-		}
-		advice.Signals = append(advice.Signals, "photo_confidence="+relevance)
-		if strings.EqualFold(relevance, "Low") {
-			advice.Warnings = append(advice.Warnings, "Photo relevance is low or mismatched")
 		}
 	}
 }

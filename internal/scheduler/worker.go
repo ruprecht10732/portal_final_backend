@@ -84,7 +84,6 @@ type LeadAutomationProcessor interface {
 	ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
 	ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
 	ProcessDispatcherRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
-	ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error
 	ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error
 	ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
 }
@@ -175,7 +174,6 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskRunGatekeeper, w.handleGatekeeperRun)
 	mux.HandleFunc(TaskRunEstimator, w.handleEstimatorRun)
 	mux.HandleFunc(TaskRunDispatcher, w.handleDispatcherRun)
-	mux.HandleFunc(TaskAnalyzePhotos, w.handlePhotoAnalysis)
 	mux.HandleFunc(TaskAuditVisitReport, w.handleAuditVisitReport)
 	mux.HandleFunc(TaskAuditCallLog, w.handleAuditCallLog)
 	mux.HandleFunc(TaskWAAgentVoiceTranscription, w.handleWAAgentVoiceTranscription)
@@ -848,33 +846,6 @@ func (w *Worker) handleDispatcherRun(ctx context.Context, task *asynq.Task) erro
 	}
 
 	return w.leadsAI.ProcessDispatcherRun(ctx, leadID, serviceID, tenantID)
-}
-
-func (w *Worker) handlePhotoAnalysis(ctx context.Context, task *asynq.Task) error {
-	if w.leadsAI == nil {
-		return errors.New(errLeadAutomationProcessorNotConfigured)
-	}
-
-	payload, err := ParsePhotoAnalysisPayload(task)
-	if err != nil {
-		return err
-	}
-
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	var userID *uuid.UUID
-	if payload.UserID != nil && *payload.UserID != "" {
-		parsed, parseErr := uuid.Parse(*payload.UserID)
-		if parseErr != nil {
-			return parseErr
-		}
-		userID = &parsed
-	}
-
-	return w.leadsAI.ProcessPhotoAnalysisJob(ctx, leadID, serviceID, tenantID, userID, payload.ContextInfo)
 }
 
 func (w *Worker) handleAuditVisitReport(ctx context.Context, task *asynq.Task) error {

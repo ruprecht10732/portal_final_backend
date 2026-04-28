@@ -55,8 +55,6 @@ type analysisToolRepoStub struct {
 	service             repository.LeadService
 	latestAnalysis      repository.AIAnalysis
 	hasLatestAnalysis   bool
-	latestPhotoAnalysis repository.PhotoAnalysis
-	hasPhotoAnalysis    bool
 	visitReport         *repository.AppointmentVisitReport
 	attachments         []repository.Attachment
 	createAnalysisCalls int
@@ -77,13 +75,6 @@ func (s *analysisToolRepoStub) GetLatestAIAnalysis(_ context.Context, _ uuid.UUI
 		return repository.AIAnalysis{}, repository.ErrNotFound
 	}
 	return s.latestAnalysis, nil
-}
-
-func (s *analysisToolRepoStub) GetLatestPhotoAnalysis(_ context.Context, _ uuid.UUID, _ uuid.UUID) (repository.PhotoAnalysis, error) {
-	if !s.hasPhotoAnalysis {
-		return repository.PhotoAnalysis{}, repository.ErrPhotoAnalysisNotFound
-	}
-	return s.latestPhotoAnalysis, nil
 }
 
 func (s *analysisToolRepoStub) GetLatestAppointmentVisitReportByService(_ context.Context, _ uuid.UUID, _ uuid.UUID) (*repository.AppointmentVisitReport, error) {
@@ -173,13 +164,6 @@ func TestNormalizeAnalysisInputAutoPopulatesTrustedFacts(t *testing.T) {
 		visitReport: &repository.AppointmentVisitReport{
 			Measurements: stringPtr("Breedte 100 cm"),
 		},
-		hasPhotoAnalysis: true,
-		latestPhotoAnalysis: repository.PhotoAnalysis{
-			Summary:                "Kozijn deels rot",
-			ExtractedText:          []string{"100 cm"},
-			NeedsOnsiteMeasurement: []string{"diepte opening"},
-			Measurements:           []repository.Measurement{{Description: "breedte", Value: 100, Unit: "cm"}},
-		},
 		attachments: []repository.Attachment{{FileName: "plattegrond.pdf"}},
 	}
 	deps := newAnalysisToolDeps(repo, tenantID)
@@ -219,8 +203,6 @@ func TestNormalizeAnalysisInputAutoPopulatesTrustedFacts(t *testing.T) {
 		"availability":              "Vrijdagen",
 		"preference_notes":          "Graag stil werken",
 		"visit_report_measurements": "Breedte 100 cm",
-		"photo_summary":             "Kozijn deels rot",
-		"photo_ocr_text":            "100 cm",
 		"document_review_required":  "true",
 		"attachment_documents":      "plattegrond.pdf",
 		"energy_class":              "A",

@@ -95,13 +95,6 @@ type OrganizationSettings struct {
 	WhatsAppToneOfVoice                               string
 	CatalogGapThreshold                               int
 	CatalogGapLookbackDays                            int
-	PhotoAnalysisPreprocessingEnabled                 bool
-	PhotoAnalysisOCRAssistEnabled                     bool
-	PhotoAnalysisOCRAssistServiceTypes                []string
-	PhotoAnalysisLensCorrectionEnabled                bool
-	PhotoAnalysisLensCorrectionServiceTypes           []string
-	PhotoAnalysisPerspectiveNormalizationEnabled      bool
-	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
 	NotificationEmail                                 *string
 	WhatsAppDeviceID                                  *string
 	WhatsAppAccountJID                                *string
@@ -138,13 +131,6 @@ type OrganizationSettingsUpdate struct {
 	WhatsAppToneOfVoice                               *string
 	CatalogGapThreshold                               *int
 	CatalogGapLookbackDays                            *int
-	PhotoAnalysisPreprocessingEnabled                 *bool
-	PhotoAnalysisOCRAssistEnabled                     *bool
-	PhotoAnalysisOCRAssistServiceTypes                *[]string
-	PhotoAnalysisLensCorrectionEnabled                *bool
-	PhotoAnalysisLensCorrectionServiceTypes           *[]string
-	PhotoAnalysisPerspectiveNormalizationEnabled      *bool
-	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string
 	NotificationEmail                                 *string
 	WhatsAppDeviceID                                  *string
 	WhatsAppAccountJID                                *string
@@ -228,13 +214,6 @@ type settingsSnapshot struct {
 	WhatsAppToneOfVoice                               string
 	CatalogGapThreshold                               int32
 	CatalogGapLookbackDays                            int32
-	PhotoAnalysisPreprocessingEnabled                 bool
-	PhotoAnalysisOCRAssistEnabled                     bool
-	PhotoAnalysisOCRAssistServiceTypes                []string
-	PhotoAnalysisLensCorrectionEnabled                bool
-	PhotoAnalysisLensCorrectionServiceTypes           []string
-	PhotoAnalysisPerspectiveNormalizationEnabled      bool
-	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
 	NotificationEmail                                 pgtype.Text
 	WhatsAppDeviceID                                  pgtype.Text
 	WhatsAppAccountJID                                pgtype.Text
@@ -432,13 +411,6 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		       ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
 		       ai_council_consensus_mode, whatsapp_tone_of_voice,
 		       catalog_gap_threshold, catalog_gap_lookback_days,
-		       photo_analysis_preprocessing_enabled,
-		       photo_analysis_ocr_assist_enabled,
-		       photo_analysis_ocr_assist_service_types,
-		       photo_analysis_lens_correction_enabled,
-		       photo_analysis_lens_correction_service_types,
-		       photo_analysis_perspective_normalization_enabled,
-		       photo_analysis_perspective_normalization_service_types,
 		       notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		       whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
 		       daily_digest_enabled, review_url,
@@ -464,13 +436,6 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&row.WhatsAppToneOfVoice,
 		&row.CatalogGapThreshold,
 		&row.CatalogGapLookbackDays,
-		&row.PhotoAnalysisPreprocessingEnabled,
-		&row.PhotoAnalysisOCRAssistEnabled,
-		&row.PhotoAnalysisOCRAssistServiceTypes,
-		&row.PhotoAnalysisLensCorrectionEnabled,
-		&row.PhotoAnalysisLensCorrectionServiceTypes,
-		&row.PhotoAnalysisPerspectiveNormalizationEnabled,
-		&row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&row.NotificationEmail,
 		&row.WhatsAppDeviceID,
 		&row.WhatsAppAccountJID,
@@ -508,13 +473,6 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			WhatsAppToneOfVoice:                               "warm, practical, and professional",
 			CatalogGapThreshold:                               3,
 			CatalogGapLookbackDays:                            30,
-			PhotoAnalysisPreprocessingEnabled:                 true,
-			PhotoAnalysisOCRAssistEnabled:                     false,
-			PhotoAnalysisOCRAssistServiceTypes:                []string{},
-			PhotoAnalysisLensCorrectionEnabled:                false,
-			PhotoAnalysisLensCorrectionServiceTypes:           []string{},
-			PhotoAnalysisPerspectiveNormalizationEnabled:      false,
-			PhotoAnalysisPerspectiveNormalizationServiceTypes: []string{},
 			WhatsAppDeviceID:                                  nil,
 			WhatsAppAccountJID:                                nil,
 			WhatsAppPresence:                                  "available",
@@ -550,13 +508,6 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  whatsapp_tone_of_voice,
 		  catalog_gap_threshold,
 		  catalog_gap_lookback_days,
-		  photo_analysis_preprocessing_enabled,
-		  photo_analysis_ocr_assist_enabled,
-		  photo_analysis_ocr_assist_service_types,
-		  photo_analysis_lens_correction_enabled,
-		  photo_analysis_lens_correction_service_types,
-		  photo_analysis_perspective_normalization_enabled,
-		  photo_analysis_perspective_normalization_service_types,
 		  notification_email,
 		  whatsapp_device_id,
 		  whatsapp_account_jid,
@@ -585,24 +536,17 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  COALESCE(NULLIF($13::text, ''), 'warm, practical, and professional'),
 		  COALESCE($14::int, 3),
 		  COALESCE($15::int, 30),
-		  COALESCE($16::boolean, true),
-		  COALESCE($17::boolean, false),
-		  COALESCE($18::text[], '{}'::text[]),
-		  COALESCE($19::boolean, false),
-		  COALESCE($20::text[], '{}'::text[]),
-		  COALESCE($21::boolean, false),
-		  COALESCE($22::text[], '{}'::text[]),
-		  NULLIF($23::text, ''),
-		  NULLIF($24::text, ''),
-		  NULLIF($25::text, ''),
-		  COALESCE(NULLIF($26::text, ''), 'available'),
-		  COALESCE($27::int, 2),
-		  COALESCE(NULLIF($28::text, ''), 'generic'),
-		  COALESCE(NULLIF($29::text, ''), 'generic'),
-		  COALESCE(NULLIF($30::text, ''), 'quote_reminder'),
-		  COALESCE(NULLIF($31::text, ''), 'appointment_reminder'),
-		  COALESCE($32::boolean, true),
-		  NULLIF($33::text, '')
+		  NULLIF($16::text, ''),
+		  NULLIF($17::text, ''),
+		  NULLIF($18::text, ''),
+		  COALESCE(NULLIF($19::text, ''), 'available'),
+		  COALESCE($20::int, 2),
+		  COALESCE(NULLIF($21::text, ''), 'generic'),
+		  COALESCE(NULLIF($22::text, ''), 'generic'),
+		  COALESCE(NULLIF($23::text, ''), 'quote_reminder'),
+		  COALESCE(NULLIF($24::text, ''), 'appointment_reminder'),
+		  COALESCE($25::boolean, true),
+		  NULLIF($26::text, '')
 		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 		  quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -619,24 +563,17 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  whatsapp_tone_of_voice = COALESCE(NULLIF($13::text, ''), RAC_organization_settings.whatsapp_tone_of_voice),
 		  catalog_gap_threshold = COALESCE($14::int, RAC_organization_settings.catalog_gap_threshold),
 		  catalog_gap_lookback_days = COALESCE($15::int, RAC_organization_settings.catalog_gap_lookback_days),
-		  photo_analysis_preprocessing_enabled = COALESCE($16::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
-		  photo_analysis_ocr_assist_enabled = COALESCE($17::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
-		  photo_analysis_ocr_assist_service_types = COALESCE($18::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
-		  photo_analysis_lens_correction_enabled = COALESCE($19::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
-		  photo_analysis_lens_correction_service_types = COALESCE($20::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
-		  photo_analysis_perspective_normalization_enabled = COALESCE($21::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
-		  photo_analysis_perspective_normalization_service_types = COALESCE($22::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
-		  notification_email = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($23::text, '') END,
-		  whatsapp_device_id = CASE WHEN $24::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($24::text, '') END,
-		  whatsapp_account_jid = CASE WHEN $25::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($25::text, '') END,
-		  whatsapp_presence = COALESCE(NULLIF($26::text, ''), RAC_organization_settings.whatsapp_presence),
-		  whatsapp_welcome_delay_minutes = COALESCE($27::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
-		  whatsapp_default_reply_scenario = COALESCE(NULLIF($28::text, ''), RAC_organization_settings.whatsapp_default_reply_scenario),
-		  email_default_reply_scenario = COALESCE(NULLIF($29::text, ''), RAC_organization_settings.email_default_reply_scenario),
-		  quote_related_reply_scenario = COALESCE(NULLIF($30::text, ''), RAC_organization_settings.quote_related_reply_scenario),
-		  appointment_related_reply_scenario = COALESCE(NULLIF($31::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
-		  daily_digest_enabled = COALESCE($32::boolean, RAC_organization_settings.daily_digest_enabled),
-		  review_url = CASE WHEN $33::text IS NULL THEN RAC_organization_settings.review_url ELSE NULLIF($33::text, '') END,
+		  notification_email = CASE WHEN $16::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($16::text, '') END,
+		  whatsapp_device_id = CASE WHEN $17::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($17::text, '') END,
+		  whatsapp_account_jid = CASE WHEN $18::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($18::text, '') END,
+		  whatsapp_presence = COALESCE(NULLIF($19::text, ''), RAC_organization_settings.whatsapp_presence),
+		  whatsapp_welcome_delay_minutes = COALESCE($20::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+		  whatsapp_default_reply_scenario = COALESCE(NULLIF($21::text, ''), RAC_organization_settings.whatsapp_default_reply_scenario),
+		  email_default_reply_scenario = COALESCE(NULLIF($22::text, ''), RAC_organization_settings.email_default_reply_scenario),
+		  quote_related_reply_scenario = COALESCE(NULLIF($23::text, ''), RAC_organization_settings.quote_related_reply_scenario),
+		  appointment_related_reply_scenario = COALESCE(NULLIF($24::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
+		  daily_digest_enabled = COALESCE($25::boolean, RAC_organization_settings.daily_digest_enabled),
+		  review_url = CASE WHEN $26::text IS NULL THEN RAC_organization_settings.review_url ELSE NULLIF($26::text, '') END,
 		  updated_at = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
 		  offer_margin_basis_points,
@@ -644,13 +581,6 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
 		  ai_council_consensus_mode, whatsapp_tone_of_voice,
 		  catalog_gap_threshold, catalog_gap_lookback_days,
-		  photo_analysis_preprocessing_enabled,
-		  photo_analysis_ocr_assist_enabled,
-		  photo_analysis_ocr_assist_service_types,
-		  photo_analysis_lens_correction_enabled,
-		  photo_analysis_lens_correction_service_types,
-		  photo_analysis_perspective_normalization_enabled,
-		  photo_analysis_perspective_normalization_service_types,
 		  notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		  whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
 		  daily_digest_enabled, review_url,
@@ -674,13 +604,6 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		normalizedTextValue(update.WhatsAppToneOfVoice),
 		update.CatalogGapThreshold,
 		update.CatalogGapLookbackDays,
-		update.PhotoAnalysisPreprocessingEnabled,
-		update.PhotoAnalysisOCRAssistEnabled,
-		normalizedStringSlice(update.PhotoAnalysisOCRAssistServiceTypes),
-		update.PhotoAnalysisLensCorrectionEnabled,
-		normalizedStringSlice(update.PhotoAnalysisLensCorrectionServiceTypes),
-		update.PhotoAnalysisPerspectiveNormalizationEnabled,
-		normalizedStringSlice(update.PhotoAnalysisPerspectiveNormalizationServiceTypes),
 		normalizedTextValue(update.NotificationEmail),
 		normalizedTextValue(update.WhatsAppDeviceID),
 		normalizedTextValue(update.WhatsAppAccountJID),
@@ -708,13 +631,6 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		&row.WhatsAppToneOfVoice,
 		&row.CatalogGapThreshold,
 		&row.CatalogGapLookbackDays,
-		&row.PhotoAnalysisPreprocessingEnabled,
-		&row.PhotoAnalysisOCRAssistEnabled,
-		&row.PhotoAnalysisOCRAssistServiceTypes,
-		&row.PhotoAnalysisLensCorrectionEnabled,
-		&row.PhotoAnalysisLensCorrectionServiceTypes,
-		&row.PhotoAnalysisPerspectiveNormalizationEnabled,
-		&row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&row.NotificationEmail,
 		&row.WhatsAppDeviceID,
 		&row.WhatsAppAccountJID,
@@ -808,13 +724,6 @@ func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID 
 		WhatsAppToneOfVoice:                               row.WhatsappToneOfVoice,
 		CatalogGapThreshold:                               row.CatalogGapThreshold,
 		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
-		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
-		PhotoAnalysisOCRAssistEnabled:                     row.PhotoAnalysisOcrAssistEnabled,
-		PhotoAnalysisOCRAssistServiceTypes:                row.PhotoAnalysisOcrAssistServiceTypes,
-		PhotoAnalysisLensCorrectionEnabled:                row.PhotoAnalysisLensCorrectionEnabled,
-		PhotoAnalysisLensCorrectionServiceTypes:           row.PhotoAnalysisLensCorrectionServiceTypes,
-		PhotoAnalysisPerspectiveNormalizationEnabled:      row.PhotoAnalysisPerspectiveNormalizationEnabled,
-		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 row.NotificationEmail,
 		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
 		WhatsAppAccountJID:                                row.WhatsappAccountJid,
@@ -968,13 +877,6 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		WhatsAppToneOfVoice:                               snapshot.WhatsAppToneOfVoice,
 		CatalogGapThreshold:                               int(snapshot.CatalogGapThreshold),
 		CatalogGapLookbackDays:                            int(snapshot.CatalogGapLookbackDays),
-		PhotoAnalysisPreprocessingEnabled:                 snapshot.PhotoAnalysisPreprocessingEnabled,
-		PhotoAnalysisOCRAssistEnabled:                     snapshot.PhotoAnalysisOCRAssistEnabled,
-		PhotoAnalysisOCRAssistServiceTypes:                cloneStrings(snapshot.PhotoAnalysisOCRAssistServiceTypes),
-		PhotoAnalysisLensCorrectionEnabled:                snapshot.PhotoAnalysisLensCorrectionEnabled,
-		PhotoAnalysisLensCorrectionServiceTypes:           cloneStrings(snapshot.PhotoAnalysisLensCorrectionServiceTypes),
-		PhotoAnalysisPerspectiveNormalizationEnabled:      snapshot.PhotoAnalysisPerspectiveNormalizationEnabled,
-		PhotoAnalysisPerspectiveNormalizationServiceTypes: cloneStrings(snapshot.PhotoAnalysisPerspectiveNormalizationServiceTypes),
 		NotificationEmail:                                 optionalString(snapshot.NotificationEmail),
 		WhatsAppDeviceID:                                  optionalString(snapshot.WhatsAppDeviceID),
 		WhatsAppAccountJID:                                optionalString(snapshot.WhatsAppAccountJID),

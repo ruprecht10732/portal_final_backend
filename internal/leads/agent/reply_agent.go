@@ -53,7 +53,6 @@ type replyContext struct {
 	recentTimeline []repository.TimelineEvent
 	analysis       *repository.AIAnalysis
 	visitReport    *repository.AppointmentVisitReport
-	photoAnalysis  *repository.PhotoAnalysis
 	acceptedQuote  *ports.PublicQuoteSummary
 	upcomingVisit  *ports.PublicAppointmentSummary
 	pendingVisit   *ports.PublicAppointmentSummary
@@ -240,10 +239,6 @@ func (a *ReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, input ports
 	if err != nil {
 		return replyContext{}, err
 	}
-	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, input.OrganizationID)
-	if err != nil {
-		return replyContext{}, err
-	}
 	acceptedQuote, err := a.loadAcceptedQuote(ctx, service.ID, input.OrganizationID)
 	if err != nil {
 		return replyContext{}, err
@@ -262,7 +257,6 @@ func (a *ReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, input ports
 		notes:         notes,
 		analysis:      analysis,
 		visitReport:   visitReport,
-		photoAnalysis: photoAnalysis,
 		acceptedQuote: acceptedQuote,
 		upcomingVisit: upcomingVisit,
 		pendingVisit:  pendingVisit,
@@ -334,17 +328,6 @@ func (a *ReplyAgent) loadLatestVisitReport(ctx context.Context, serviceID, organ
 	return nil, fmt.Errorf("reply agent: load visit report: %w", err)
 }
 
-func (a *ReplyAgent) loadLatestPhotoAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.PhotoAnalysis, error) {
-	photoAnalysis, err := a.repo.GetLatestPhotoAnalysis(ctx, serviceID, organizationID)
-	if err == nil {
-		return &photoAnalysis, nil
-	}
-	if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("reply agent: load photo analysis: %w", err)
-}
-
 func buildWhatsAppReplyPrompt(
 	input ports.WhatsAppReplyInput,
 	replyContext replyContext,
@@ -401,9 +384,6 @@ Latest AI analysis
 Latest visit report
 %s
 
-Latest photo analysis
-%s
-
 Lead notes
 %s
 
@@ -454,7 +434,6 @@ Task
 		formatTimelineBlock(replyContext.recentTimeline),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
-		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
 		formatLeadNotesBlock(replyContext.notes),
 		formatWhatsAppFeedbackMemory(input.Feedback),
 		formatWhatsAppExamples(input.Examples),
@@ -653,32 +632,6 @@ func formatVisitReportBlock(report *repository.AppointmentVisitReport) string {
 	}
 	if report.Notes != nil && strings.TrimSpace(*report.Notes) != "" {
 		parts = append(parts, "- Notities: "+sanitizePromptField(*report.Notes, 800))
-	}
-	if len(parts) == 0 {
-		return valueNotProvided
-	}
-	return strings.Join(parts, "\n")
-}
-
-func formatPhotoAnalysisBlock(analysis *repository.PhotoAnalysis) string {
-	if analysis == nil {
-		return valueNotProvided
-	}
-	parts := []string{fmt.Sprintf(freshnessLineFormat, formatFreshness(analysis.CreatedAt))}
-	if summary := strings.TrimSpace(analysis.Summary); summary != "" {
-		parts = append(parts, "- Samenvatting: "+sanitizePromptField(summary, 800))
-	}
-	if scope := strings.TrimSpace(analysis.ScopeAssessment); scope != "" {
-		parts = append(parts, "- Scope: "+sanitizePromptField(scope, 500))
-	}
-	if costs := strings.TrimSpace(analysis.CostIndicators); costs != "" {
-		parts = append(parts, "- Kostenindicaties: "+sanitizePromptField(costs, 500))
-	}
-	if len(analysis.Discrepancies) > 0 {
-		parts = append(parts, "- Afwijkingen: "+sanitizeUserInput(strings.Join(analysis.Discrepancies, "; "), 600))
-	}
-	if len(analysis.NeedsOnsiteMeasurement) > 0 {
-		parts = append(parts, "- Nog op locatie meten: "+sanitizeUserInput(strings.Join(analysis.NeedsOnsiteMeasurement, "; "), 600))
 	}
 	if len(parts) == 0 {
 		return valueNotProvided
@@ -1146,14 +1099,9 @@ func (a *ReplyAgent) loadServiceReplyContext(ctx context.Context, organizationID
 	if err != nil {
 		return err
 	}
-	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, organizationID)
-	if err != nil {
-		return err
-	}
 
 	contextData.analysis = analysis
 	contextData.visitReport = visitReport
-	contextData.photoAnalysis = photoAnalysis
 	return nil
 }
 
@@ -1209,9 +1157,6 @@ Latest AI analysis
 Latest visit report
 %s
 
-Latest photo analysis
-%s
-
 Lead notes
 %s
 
@@ -1265,7 +1210,6 @@ Task
 		formatTimelineBlock(replyContext.recentTimeline),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
-		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
 		formatLeadNotesBlock(replyContext.notes),
 		formatEmailFeedbackMemory(input.Feedback),
 		formatEmailExamples(input.Examples),

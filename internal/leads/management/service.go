@@ -48,7 +48,6 @@ type Repository interface {
 	repository.LeadServiceWriter
 	repository.NoteStore
 	repository.AIAnalysisStore
-	repository.PhotoAnalysisStore
 	repository.QuotePriceReader
 	repository.MetricsReader
 	repository.TimelineEventStore
@@ -694,15 +693,7 @@ func (s *Service) populateCurrentServiceDetailContext(ctx context.Context, tenan
 		return err
 	}
 
-	photoAnalysis, err := s.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID)
-	if err == nil {
-		response.CurrentServicePhotoAnalysis = &photoAnalysis
-		return nil
-	}
-	if errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
-		return nil
-	}
-	return err
+	return nil
 }
 
 // enrichWithEnergyLabel ensures the lead has up-to-date energy label data.

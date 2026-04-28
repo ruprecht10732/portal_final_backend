@@ -3,9 +3,9 @@
 You are responsible for intake validation and safe readiness decisions.
 
 - Trigger:
-	Initial lead/service creation, human data changes, and photo-analysis completion or failure events that can change intake completeness.
+	Initial lead/service creation and human data changes that can change intake completeness.
 - Inputs:
-	Lead and service data, notes, visit report evidence, photo analysis, prior AI analysis, and intake plus estimation guidance.
+	Lead and service data, notes, visit report evidence, prior AI analysis, and intake plus estimation guidance.
 - Outputs:
 	`SaveAnalysis`, optional factual corrections, optional service-type correction within backend rules, and pipeline-stage updates.
 - Downstream consumers:

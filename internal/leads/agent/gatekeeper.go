@@ -146,7 +146,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return nil
 	}
 
-	notes, attachments, photoAnalysis, visitReport := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
+	notes, attachments, visitReport := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
 	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
 	estimationContext := fetchServiceTypeEstimationGuidelines(ctx, g.repo, tenantID, service.ServiceType)
 	priorAnalysis := g.loadPriorAnalysis(ctx, serviceID, tenantID)
@@ -160,7 +160,6 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		intakeContext:      intakeContext,
 		estimationContext:  estimationContext,
 		attachments:        attachments,
-		photoAnalysis:      photoAnalysis,
 		priorAnalysis:      priorAnalysis,
 		nurturingLoopCount: service.GatekeeperNurturingLoopCount,
 		agentCycleCount:    service.AgentCycleCount,
@@ -324,7 +323,7 @@ func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, se
 	log.Printf("gatekeeper: applied fallback stage update to %s (runID=%s lead=%s service=%s)", targetStage, runID, leadID, serviceID)
 }
 
-func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis, *repository.AppointmentVisitReport) {
+func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.AppointmentVisitReport) {
 	notes, err := g.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("gatekeeper notes fetch failed: %v", err)
@@ -337,13 +336,6 @@ func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID,
 		attachments = nil
 	}
 
-	var photoAnalysis *repository.PhotoAnalysis
-	if pa, err := g.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); err == nil {
-		photoAnalysis = &pa
-	} else if !errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
-		log.Printf("gatekeeper photo analysis fetch failed: %v", err)
-	}
-
 	var visitReport *repository.AppointmentVisitReport
 	if vr, err := g.repo.GetLatestAppointmentVisitReportByService(ctx, serviceID, tenantID); err == nil {
 		visitReport = vr
@@ -351,7 +343,7 @@ func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID,
 		log.Printf("gatekeeper visit report fetch failed: %v", err)
 	}
 
-	return notes, attachments, photoAnalysis, visitReport
+	return notes, attachments, visitReport
 }
 
 type gatekeeperPromptRequest struct {
@@ -364,7 +356,6 @@ type gatekeeperPromptRequest struct {
 	intakeContext      string
 	estimationContext  string
 	attachments        []repository.Attachment
-	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
 	nurturingLoopCount int
 	agentCycleCount    int
@@ -379,7 +370,6 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 		intakeContext:      req.intakeContext,
 		estimationContext:  req.estimationContext,
 		attachments:        req.attachments,
-		photoAnalysis:      req.photoAnalysis,
 		priorAnalysis:      req.priorAnalysis,
 		nurturingLoopCount: req.nurturingLoopCount,
 		agentCycleCount:    req.agentCycleCount,

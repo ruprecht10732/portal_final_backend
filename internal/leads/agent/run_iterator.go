@@ -225,7 +225,13 @@ func runPromptTextSession(ctx context.Context, req promptRunRequest, promptText 
 	var output strings.Builder
 	req.UserMessage = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}}
 	err := runPromptSession(ctx, req, func(event *session.Event) {
-		output.WriteString(collectContentText(event.Content))
+		if event.Content != nil {
+			for _, part := range event.Content.Parts {
+				if part != nil && !part.Thought && part.Text != "" {
+					output.WriteString(part.Text)
+				}
+			}
+		}
 	})
 	if err != nil {
 		return "", err

@@ -248,12 +248,4 @@ func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
 	return true
 }
 
-// OnDataChange handles human data changes and re-triggers agents when needed.
-
-
-
-
-// OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.
-
-// OnPhotoAnalysisFailed records failure context and wakes gatekeeper explicitly when useful.
 

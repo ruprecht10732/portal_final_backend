@@ -21,14 +21,12 @@ const (
 	maxGatekeeperNotesChars       = 3000
 	maxGatekeeperVisitReportChars = 2200
 	maxGatekeeperPreferencesChars = 1200
-	maxGatekeeperPhotoChars       = 2500
 	maxGatekeeperLeadCtxChars     = 1200
 	maxGatekeeperIntakeChars      = 3000
 
 	maxEstimatorServiceNoteChars = 2000
 	maxEstimatorNotesChars       = 3000
 	maxEstimatorPreferencesChars = 1200
-	maxEstimatorPhotoChars       = 3500
 	maxEstimatorContextChars     = 6000
 
 	maxQuoteServiceNoteChars = 2000
@@ -49,8 +47,6 @@ var sharedGlobalPreamble = mustReadPromptFile("shared/prompts/global-preamble.md
 
 var sharedMathExamples = mustReadPromptFile("shared/prompts/math-examples.md")
 
-var sharedPhotoTrustRules = mustReadPromptFile("shared/prompts/photo-trust-rules.md")
-
 var sharedIntakeCompletenessGate = mustReadPromptFile("shared/prompts/intake-completeness-gate.md")
 
 type gatekeeperPromptInput struct {
@@ -61,7 +57,6 @@ type gatekeeperPromptInput struct {
 	intakeContext      string
 	estimationContext  string
 	attachments        []repository.Attachment
-	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
 	nurturingLoopCount int
 	agentCycleCount    int
@@ -71,7 +66,6 @@ type quotePromptInput struct {
 	lead              repository.Lead
 	service           repository.LeadService
 	notes             []repository.LeadNote
-	photoAnalysis     *repository.PhotoAnalysis
 	estimationContext string
 	scopeArtifact     *ScopeArtifact
 }
@@ -79,7 +73,6 @@ type quotePromptInput struct {
 type gatekeeperPromptTemplateData struct {
 	ExecutionContract         string
 	CommunicationContract     string
-	SharedPhotoTrustRules     string
 	PreferredChannel          string
 	RecoveryModeSection       string
 	CycleAwarenessSection     string
@@ -94,7 +87,6 @@ type gatekeeperPromptTemplateData struct {
 	NotesSection              string
 	VisitReportSummary        string
 	PreferencesSummary        string
-	PhotoSummary              string
 	PreviousEstimatorBlockers string
 	KnownFacts                string
 	AttachmentAwareness       string
@@ -113,7 +105,6 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxGatekeeperPreferencesChars)
 	leadContext := truncatePromptSection(buildLeadContextSection(input.lead, input.attachments), maxGatekeeperLeadCtxChars)
 	attachmentAwareness := truncatePromptSection(buildAttachmentAwarenessSection(input.attachments), maxGatekeeperLeadCtxChars)
-	photoSummary := truncatePromptSection(buildGatekeeperPhotoSummary(input.photoAnalysis, input.service.ServiceType), maxGatekeeperPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
 	intakeContextSummary := truncatePromptSection(input.intakeContext, maxGatekeeperIntakeChars)
 	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
@@ -149,7 +140,6 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	return renderPromptTemplate(gatekeeperPromptTemplate, gatekeeperPromptTemplateData{
 		ExecutionContract:         sharedExecutionContract,
 		CommunicationContract:     sharedCommunicationContract,
-		SharedPhotoTrustRules:     sharedPhotoTrustRules,
 		PreferredChannel:          preferredChannel,
 		RecoveryModeSection:       recoveryModeSection,
 		CycleAwarenessSection:     cycleAwarenessSection,
@@ -164,7 +154,6 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 		NotesSection:              notesSection,
 		VisitReportSummary:        visitReportSummary,
 		PreferencesSummary:        preferencesSummary,
-		PhotoSummary:              photoSummary,
 		PreviousEstimatorBlockers: previousEstimatorBlockers,
 		KnownFacts:                knownFacts,
 		AttachmentAwareness:       attachmentAwareness,
@@ -291,28 +280,24 @@ func visitReportValue(value *string) string {
 	return sanitizeUserInput(trimmed, maxNoteLength)
 }
 
-func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {
+func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote) string {
 	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 
 	return renderPromptTemplate(scopeAnalyzerPromptTemplate, struct {
-		ExecutionContract           string
-		SharedPhotoTrustRules       string
+		ExecutionContract            string
 		SharedIntakeCompletenessGate string
-		LeadID                      uuid.UUID
-		ServiceID                   uuid.UUID
-		ServiceType                 string
-		PipelineStage               string
-		ServiceNoteSummary          string
-		NotesSection                string
-		PreferencesSummary          string
-		PhotoSummary                string
+		LeadID                       uuid.UUID
+		ServiceID                    uuid.UUID
+		ServiceType                  string
+		PipelineStage                string
+		ServiceNoteSummary           string
+		NotesSection                 string
+		PreferencesSummary           string
 	}{
 		ExecutionContract:            sharedExecutionContract,
-		SharedPhotoTrustRules:        sharedPhotoTrustRules,
 		SharedIntakeCompletenessGate: sharedIntakeCompletenessGate,
 		LeadID:                       lead.ID,
 		ServiceID:                    service.ID,
@@ -321,15 +306,13 @@ func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadServi
 		ServiceNoteSummary:           serviceNoteSummary,
 		NotesSection:                 notesSection,
 		PreferencesSummary:           preferencesSummary,
-		PhotoSummary:                 photoSummary,
 	})
 }
 
-func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis, estimationContext string, scopeArtifact *ScopeArtifact) string {
+func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, estimationContext string, scopeArtifact *ScopeArtifact) string {
 	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(estimationContext, maxEstimatorContextChars)
 	scopeSummary := truncatePromptSection(formatScopeArtifact(scopeArtifact), maxEstimatorContextChars)
@@ -341,7 +324,6 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 		ScopeSummary                 string
 		SharedProductSelectionRules  string
 		SharedMathExamples           string
-		SharedPhotoTrustRules        string
 		SharedIntakeCompletenessGate string
 		LeadID                       uuid.UUID
 		ServiceID                    uuid.UUID
@@ -353,14 +335,12 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 		ServiceNoteSummary           string
 		NotesSection                 string
 		PreferencesSummary           string
-		PhotoSummary                 string
 		EstimationContextSummary     string
 	}{
 		ExecutionContract:            sharedExecutionContract,
 		ScopeSummary:                 scopeSummary,
 		SharedProductSelectionRules:  sharedProductSelectionRules,
 		SharedMathExamples:           sharedMathExamples,
-		SharedPhotoTrustRules:        sharedPhotoTrustRules,
 		SharedIntakeCompletenessGate: sharedIntakeCompletenessGate,
 		LeadID:                       lead.ID,
 		ServiceID:                    service.ID,
@@ -372,18 +352,16 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 		ServiceNoteSummary:           serviceNoteSummary,
 		NotesSection:                 notesSection,
 		PreferencesSummary:           preferencesSummary,
-		PhotoSummary:                 photoSummary,
 		EstimationContextSummary:     estimationContextSummary,
 	})
 }
 
-func buildInvestigativePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis, missingItems []string, estimationContext string) string {
+func buildInvestigativePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, missingItems []string, estimationContext string) string {
 	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferredChannel := resolvePreferredContactChannel(lead)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
-	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(estimationContext, maxEstimatorContextChars)
 	houseContextSummary := truncatePromptSection(buildHouseContextSection(lead), maxGatekeeperLeadCtxChars)
 
@@ -413,7 +391,6 @@ func buildInvestigativePrompt(lead repository.Lead, service repository.LeadServi
 		ServiceNoteSummary       string
 		NotesSection             string
 		PreferencesSummary       string
-		PhotoSummary             string
 		HouseContextSummary      string
 		EstimationContextSummary string
 	}{
@@ -427,7 +404,6 @@ func buildInvestigativePrompt(lead repository.Lead, service repository.LeadServi
 		ServiceNoteSummary:       serviceNoteSummary,
 		NotesSection:             notesSection,
 		PreferencesSummary:       preferencesSummary,
-		PhotoSummary:             photoSummary,
 		HouseContextSummary:      houseContextSummary,
 		EstimationContextSummary: estimationContextSummary,
 	})
@@ -810,7 +786,6 @@ func buildQuoteCriticPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 	notesSection := buildNotesSection(input.notes, maxQuoteNotesChars)
 	serviceNote := getValue(input.service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(input.estimationContext, maxEstimatorContextChars)
 	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxEstimatorContextChars)
@@ -830,7 +805,6 @@ func buildQuoteCriticPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 		ServiceNoteSummary       string
 		NotesSection             string
 		PreferencesSummary       string
-		PhotoSummary             string
 		ScopeSummary             string
 		EstimationContextSummary string
 		DraftJSON                string
@@ -846,7 +820,6 @@ func buildQuoteCriticPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 		ServiceNoteSummary:       serviceNoteSummary,
 		NotesSection:             notesSection,
 		PreferencesSummary:       preferencesSummary,
-		PhotoSummary:             photoSummary,
 		ScopeSummary:             scopeSummary,
 		EstimationContextSummary: estimationContextSummary,
 		DraftJSON:                draftJSON,
@@ -857,7 +830,6 @@ func buildQuoteRepairPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 	notesSection := buildNotesSection(input.notes, maxQuoteNotesChars)
 	serviceNote := getValue(input.service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(input.estimationContext, maxEstimatorContextChars)
 	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxEstimatorContextChars)
@@ -877,7 +849,6 @@ func buildQuoteRepairPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 		ServiceNoteSummary       string
 		NotesSection             string
 		PreferencesSummary       string
-		PhotoSummary             string
 		ScopeSummary             string
 		EstimationContextSummary string
 		DraftJSON                string
@@ -893,7 +864,6 @@ func buildQuoteRepairPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 		ServiceNoteSummary:       serviceNoteSummary,
 		NotesSection:             notesSection,
 		PreferencesSummary:       preferencesSummary,
-		PhotoSummary:             photoSummary,
 		ScopeSummary:             scopeSummary,
 		EstimationContextSummary: estimationContextSummary,
 		DraftJSON:                draftJSON,
@@ -1003,112 +973,4 @@ func preferenceValue(value string) string {
 	return sanitizeUserInput(value, maxNoteLength)
 }
 
-func buildPhotoSummaryContent(photoAnalysis *repository.PhotoAnalysis) string {
-	var sb strings.Builder
-	if photoAnalysis.Summary != "" {
-		sb.WriteString("Summary: " + photoAnalysis.Summary + "\n")
-	}
-	if photoAnalysis.ScopeAssessment != "" {
-		sb.WriteString("Scope: " + photoAnalysis.ScopeAssessment + "\n")
-	}
-	if photoAnalysis.CostIndicators != "" {
-		sb.WriteString("Cost: " + photoAnalysis.CostIndicators + "\n")
-	}
-	if len(photoAnalysis.Observations) > 0 {
-		sb.WriteString("Observations: " + strings.Join(photoAnalysis.Observations, "; ") + "\n")
-	}
-	if len(photoAnalysis.SafetyConcerns) > 0 {
-		sb.WriteString("Safety: " + strings.Join(photoAnalysis.SafetyConcerns, "; ") + "\n")
-	}
-	if len(photoAnalysis.AdditionalInfo) > 0 {
-		sb.WriteString("Additional: " + strings.Join(photoAnalysis.AdditionalInfo, "; ") + "\n")
-	}
-	if len(photoAnalysis.Measurements) > 0 || len(photoAnalysis.NeedsOnsiteMeasurement) > 0 {
-		sb.WriteString("Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed. On-site measurement requests override uncertain dimensions.\n")
-	}
 
-	// New v2 fields
-	if len(photoAnalysis.Measurements) > 0 {
-		sb.WriteString("Measurements:\n")
-		for _, m := range photoAnalysis.Measurements {
-			_, _ = fmt.Fprintf(&sb, "  - %s: %.2f %s (%s, confidence: %s)\n", m.Description, m.Value, m.Unit, m.Type, m.Confidence)
-		}
-	}
-	if len(photoAnalysis.NeedsOnsiteMeasurement) > 0 {
-		sb.WriteString("Needs on-site measurement: " + strings.Join(photoAnalysis.NeedsOnsiteMeasurement, "; ") + "\n")
-	}
-	if len(photoAnalysis.Discrepancies) > 0 {
-		sb.WriteString("⚠ Discrepancies (consumer claims vs photos): " + strings.Join(photoAnalysis.Discrepancies, "; ") + "\n")
-	}
-	if len(photoAnalysis.ExtractedText) > 0 {
-		sb.WriteString("Extracted text (OCR): " + strings.Join(photoAnalysis.ExtractedText, "; ") + "\n")
-	}
-	if len(photoAnalysis.SuggestedSearchTerms) > 0 {
-		sb.WriteString("Suggested product search terms: " + strings.Join(photoAnalysis.SuggestedSearchTerms, ", ") + "\n")
-	}
-
-	return sb.String()
-}
-
-func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
-	if photoAnalysis == nil {
-		return "No photo analysis available."
-	}
-
-	return wrapUserData(buildPhotoSummaryContent(photoAnalysis))
-}
-
-func buildGatekeeperPhotoSummary(photoAnalysis *repository.PhotoAnalysis, serviceType string) string {
-	if photoAnalysis == nil {
-		return "No photo analysis available."
-	}
-	if isPhotoAnalysisLikelyIrrelevant(photoAnalysis) {
-		details := strings.TrimSpace(buildPhotoSummaryContent(photoAnalysis))
-		return wrapUserData(fmt.Sprintf(
-			"Photo relevance: low for service type '%s'. The image content likely does not match the requested service. Use this photo analysis only as mismatch signal, not as evidence that intake requirements are complete.\n\nMismatch evidence from photo analysis:\n%s",
-			serviceType,
-			details,
-		))
-	}
-	return buildPhotoSummary(photoAnalysis)
-}
-
-func isPhotoAnalysisLikelyIrrelevant(photoAnalysis *repository.PhotoAnalysis) bool {
-	if photoAnalysis == nil {
-		return false
-	}
-	// Prefer explicit structured signal from the LLM when available.
-	if photoAnalysis.IsRelevant != nil {
-		return !*photoAnalysis.IsRelevant
-	}
-	combined := strings.ToLower(strings.TrimSpace(photoAnalysis.Summary + " " + strings.Join(photoAnalysis.Discrepancies, " ")))
-	if containsAny(combined, []string{
-		"niet de betreffende",
-		"komt niet overeen",
-		"niet relevant",
-		"mismatch",
-		"onverwant",
-		"does not match",
-		"not relevant",
-		"niets te maken met",
-		"geen betrekking",
-		"onduidelijk",
-		"niet zichtbaar",
-		"niet herkenbaar",
-		"verkeerde",
-		"andere ruimte",
-		"andere situatie",
-		"irrelevant",
-		"unrelated",
-		"wrong room",
-		"wrong area",
-		"unclear image",
-		" blurry",
-		"blurry ",
-		"too dark",
-		"te donker",
-	}) {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(photoAnalysis.ConfidenceLevel), "low") && len(photoAnalysis.Discrepancies) > 0
-}

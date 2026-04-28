@@ -119,17 +119,6 @@ func newDetailContextTestState() detailContextTestState {
 			Summary:                 "Intake is promising but incomplete.",
 			CreatedAt:               now.Add(-30 * time.Minute),
 		},
-		photo: &leadsrepo.PhotoAnalysis{
-			ID:              uuid.New(),
-			LeadID:          leadID,
-			ServiceID:       serviceID,
-			Summary:         "Visible flashing damage near the chimney.",
-			Observations:    []string{"Cracked flashing"},
-			ScopeAssessment: "Local repair",
-			ConfidenceLevel: "High",
-			PhotoCount:      3,
-			CreatedAt:       now.Add(-25 * time.Minute),
-		},
 	}
 
 	mgmt := management.New(repo, events.NewInMemoryBus(nil), nil)
@@ -238,9 +227,6 @@ func assertDetailContextWorkflowAndAnalysis(t *testing.T, response leadstranspor
 	if response.CurrentServiceAnalysis == nil || response.CurrentServiceAnalysis.Analysis == nil {
 		t.Fatalf("expected current service analysis payload, got %+v", response.CurrentServiceAnalysis)
 	}
-	if response.CurrentServicePhotoAnalysis == nil || response.CurrentServicePhotoAnalysis.Summary == "" {
-		t.Fatalf("expected current service photo analysis payload, got %+v", response.CurrentServicePhotoAnalysis)
-	}
 }
 
 type detailContextRepoStub struct {
@@ -251,7 +237,6 @@ type detailContextRepoStub struct {
 	whatsAppItems []leadsrepo.LinkedWhatsAppConversation
 	emailItems    []leadsrepo.LinkedIMAPMessage
 	analysis      *leadsrepo.AIAnalysis
-	photo         *leadsrepo.PhotoAnalysis
 }
 
 func (s *detailContextRepoStub) GetByIDWithServices(_ context.Context, _ uuid.UUID, _ uuid.UUID) (leadsrepo.Lead, []leadsrepo.LeadService, error) {
@@ -279,13 +264,6 @@ func (s *detailContextRepoStub) GetLatestAIAnalysis(_ context.Context, _ uuid.UU
 		return leadsrepo.AIAnalysis{}, leadsrepo.ErrNotFound
 	}
 	return *s.analysis, nil
-}
-
-func (s *detailContextRepoStub) GetLatestPhotoAnalysis(_ context.Context, _ uuid.UUID, _ uuid.UUID) (leadsrepo.PhotoAnalysis, error) {
-	if s.photo == nil {
-		return leadsrepo.PhotoAnalysis{}, leadsrepo.ErrPhotoAnalysisNotFound
-	}
-	return *s.photo, nil
 }
 
 type detailContextQuoteReader struct {

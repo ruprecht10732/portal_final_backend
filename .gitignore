@@ -26,3 +26,10 @@ Thumbs.db
 nul
 models/
 scheduler
+.swarm
+SWARM_PLAN.md
+.swarm/repo-graph.json
+SWARM_PLAN.json
+.swarm/telemetry.jsonl
+.swarm/telemetry.jsonl
+.swarm/repo-graph.json

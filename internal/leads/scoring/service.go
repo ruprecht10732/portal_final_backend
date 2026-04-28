@@ -320,7 +320,7 @@ func (s *Service) Recalculate(ctx context.Context, leadID uuid.UUID, serviceID *
 	data := s.fetchScoringData(ctx, leadID, tenantID, svc, includeAI)
 
 	now := time.Now().UTC()
-	preAI, factors := s.computePreAIScore(lead, svc, data.notes, data.photo, data.apptStats, data.serviceType)
+	preAI, factors := s.computePreAIScore(lead, svc, data.notes, data.apptStats, data.serviceType)
 	finalScore, aiFactors := s.applyAIFactors(preAI, data.ai)
 	mergeFactors(factors, aiFactors)
 
@@ -339,7 +339,6 @@ func (s *Service) Recalculate(ctx context.Context, leadID uuid.UUID, serviceID *
 type scoringData struct {
 	notes       []repository.LeadNote
 	apptStats   repository.LeadAppointmentStats
-	photo       *repository.PhotoAnalysis
 	ai          *repository.AIAnalysis
 	serviceType string
 }
@@ -361,10 +360,6 @@ func (s *Service) fetchScoringData(ctx context.Context, leadID, tenantID uuid.UU
 	}
 
 	data.serviceType = determineServiceType(svc)
-
-	if photo, err := s.repo.GetLatestPhotoAnalysis(ctx, svc.ID, tenantID); err == nil {
-		data.photo = &photo
-	}
 
 	if includeAI {
 		if ai, err := s.repo.GetLatestAIAnalysis(ctx, svc.ID, tenantID); err == nil {
@@ -426,7 +421,7 @@ func getServiceWeights(serviceType string) serviceWeights {
 	return defaultServiceWeights
 }
 
-func (s *Service) computePreAIScore(lead repository.Lead, svc *repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, apptStats repository.LeadAppointmentStats, serviceType string) (int, map[string]float64) {
+func (s *Service) computePreAIScore(lead repository.Lead, svc *repository.LeadService, notes []repository.LeadNote, apptStats repository.LeadAppointmentStats, serviceType string) (int, map[string]float64) {
 	score := baseScore
 	factors := map[string]float64{}
 	weights := getServiceWeights(serviceType)
@@ -525,11 +520,6 @@ func (s *Service) computePreAIScore(lead repository.Lead, svc *repository.LeadSe
 	// Score: 0 to +6
 	notesScore := s.scoreNotes(notes) * weights.activity
 	score += s.addFactor(factors, "activity", notesScore)
-
-	// Photo analysis: Shows serious intent
-	// Score: 0 to +8
-	photoScore := s.scorePhoto(photo) * weights.photo
-	score += s.addFactor(factors, "photo", photoScore)
 
 	// Consumer note: Customer's description of their need
 	// Score: 0 to +8 based on length and content
@@ -1000,42 +990,6 @@ func (s *Service) scoreNotes(notes []repository.LeadNote) float64 {
 	}
 
 	return clampFloat(score, 0, 6)
-}
-
-// scorePhoto evaluates photo analysis data.
-// Photos show serious intent and help qualify scope.
-func (s *Service) scorePhoto(photo *repository.PhotoAnalysis) float64 {
-	if photo == nil {
-		return 0
-	}
-
-	score := 0.0
-
-	// Having photos at all shows intent
-	score += 2
-
-	// Confidence in analysis
-	switch photo.ConfidenceLevel {
-	case "High":
-		score += 2
-	case "Medium":
-		score += 1
-	}
-
-	// Scope indicates project size
-	switch photo.ScopeAssessment {
-	case "Large":
-		score += 2
-	case "Medium":
-		score += 1
-	}
-
-	// Safety concerns indicate urgency
-	if len(photo.SafetyConcerns) > 0 {
-		score += 2
-	}
-
-	return clampFloat(score, 0, 8)
 }
 
 // scoreConsumerNote evaluates the customer's description of their need.

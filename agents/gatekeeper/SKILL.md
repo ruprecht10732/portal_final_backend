@@ -23,7 +23,7 @@ It verifies whether the service data is complete, whether the service type still
 ### Evaluate Intake
 
 <step-by-step>
-1. Read the full intake, notes, attachments, and photo-analysis context.
+1. Read the full intake, notes, and attachments.
 2. Identify missing information, contradictions, or service-type mismatches.
 3. Decide whether the service should progress, stay in nurturing, or move to manual intervention.
 </step-by-step>

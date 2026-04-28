@@ -123,7 +123,7 @@ func shouldAttemptTimelineDedup(params CreateTimelineEventParams) bool {
 		return false
 	}
 	switch params.EventType {
-	case EventTypeAI, EventTypeAnalysis, EventTypePhotoAnalysisCompleted, EventTypeStageChange, EventTypeAlert:
+	case EventTypeAI, EventTypeAnalysis, EventTypeStageChange, EventTypeAlert:
 		return true
 	default:
 		return false

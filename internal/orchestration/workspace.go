@@ -65,7 +65,6 @@ var workspaceDefinitions = map[string]workspaceDefinition{
 	"calculator":             {workspaceDir: "agents/calculator", skipPrompts: true},
 	"matchmaker":             {workspaceDir: "agents/matchmaker", skipPrompts: true},
 	"auditor":                {workspaceDir: "agents/support/auditor"},
-	"photo-analyzer":         {workspaceDir: "agents/support/photo_analyzer", skipPrompts: true},
 	"call-logger":            {workspaceDir: "agents/support/call_logger"},
 	"offer-summary":          {workspaceDir: "agents/support/offer_summary"},
 	"subsidy-analyzer":       {workspaceDir: "agents/subsidy-analyzer"},

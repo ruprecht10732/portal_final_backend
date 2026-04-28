@@ -14,12 +14,11 @@ type leadContext struct {
 	lead    repository.Lead
 	service repository.LeadService
 	notes   []repository.LeadNote
-	photo   *repository.PhotoAnalysis
 }
 
-// fetchLeadContextParallel fetches lead, service, notes, and photo analysis
-// concurrently using errgroup, reducing latency for the quoting agent's
-// initial data-gathering phase.
+// fetchLeadContextParallel fetches lead, service, and notes concurrently
+// using errgroup, reducing latency for the quoting agent's initial
+// data-gathering phase.
 func fetchLeadContextParallel(ctx context.Context, repo repository.LeadsRepository, leadID, serviceID, tenantID uuid.UUID) leadContext {
 	var result leadContext
 	g, gctx := errgroup.WithContext(ctx)
@@ -49,13 +48,6 @@ func fetchLeadContextParallel(ctx context.Context, repo repository.LeadsReposito
 			// Non-fatal: notes are optional enrichment
 		}
 		result.notes = notes
-		return nil
-	})
-
-	g.Go(func() error {
-		if analysis, err := repo.GetLatestPhotoAnalysis(gctx, serviceID, tenantID); err == nil {
-			result.photo = &analysis
-		}
 		return nil
 	})
 

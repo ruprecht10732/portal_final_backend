@@ -56,4 +56,4 @@ var quoteCriticPromptTemplate = mustLoadPromptTemplate("quote-critic", "calculat
 
 var quoteRepairPromptTemplate = mustLoadPromptTemplate("quote-repair", "calculator/prompts/quote_repair.md")
 
-var photoAnalysisPromptTemplate = mustLoadPromptTemplate("photo-analysis", "support/photo_analyzer/prompts/request.md")
+

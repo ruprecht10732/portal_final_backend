@@ -23,7 +23,6 @@ After UpdatePipelineStage returns success, your task is COMPLETE. Output a singl
 [DECISION RULE] Missing required intake item → critical missingInformation.
 [DECISION RULE] Required info clearly present in trusted context → not missing.
 [DECISION RULE] Photo analysis marked low relevance/mismatch → mismatch signal only, NOT proof of completeness.
-{{ .SharedPhotoTrustRules }}
 [DECISION RULE] For repair/adjustment/replacement work, measurements needed only for final on-site verification are NOT automatic blockers when a bounded preliminary estimate is possible.
 [DECISION RULE] Do NOT set RecommendedAction=RequestInfo solely for confirmatory measurements.
 [DECISION RULE] Hard blockers vs soft details: only the following are hard blockers (must be in missingInformation): location/address, problem description, and scope of work. The following are NEVER hard blockers and must NOT appear in missingInformation: desired finish/color/material preference (Estimator assumes standard), preferred execution date/planning, budget indication, exact bouwjaar when the address is known. If these soft details are unknown, note them in extractedFacts as assumptions but do NOT block progression to Estimation.
@@ -91,9 +90,6 @@ Visit Report (latest appointment):
 
 Preferences (from customer portal):
 {{ .PreferencesSummary }}
-
-Photo Analysis (AI visual inspection):
-{{ .PhotoSummary }}
 
 Previous Estimator Blockers:
 {{ .PreviousEstimatorBlockers }}

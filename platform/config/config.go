@@ -21,7 +21,6 @@ const (
 	DefaultLLMModel             = defaultKimiModel
 	DefaultOfferSummaryLLMModel = "moonshot-v1-8k"
 
-	LLMModelAgentPhotoAnalyzer         = "photo_analyzer"
 	LLMModelAgentCallLogger            = "call_logger"
 	LLMModelAgentGatekeeper            = "gatekeeper"
 	LLMModelAgentAuditor               = "auditor"
@@ -295,7 +294,6 @@ type Config struct {
 	DeepSeekAPIKey                    string
 	LLMProvider                       string // "kimi" (default) or "deepseek"
 	LLMModelDefault                   string
-	LLMModelPhotoAnalyzer             string
 	LLMModelCallLogger                string
 	LLMModelGatekeeper                string
 	LLMModelAuditor                   string
@@ -518,8 +516,6 @@ func (c *Config) ResolveAgentModel(agentName string) (LLMProviderConfig, string)
 
 func (c *Config) llmModelOverride(agentName string) string {
 	switch agentName {
-	case LLMModelAgentPhotoAnalyzer:
-		return c.LLMModelPhotoAnalyzer
 	case LLMModelAgentCallLogger:
 		return c.LLMModelCallLogger
 	case LLMModelAgentGatekeeper:
@@ -708,7 +704,6 @@ func Load() (*Config, error) {
 		DeepSeekAPIKey:                    getEnv("DEEPSEEK_API_KEY", ""),
 		LLMProvider:                       strings.ToLower(getEnv("LLM_PROVIDER", LLMProviderKimi)),
 		LLMModelDefault:                   getEnv("LLM_MODEL_DEFAULT", ""),
-		LLMModelPhotoAnalyzer:             getEnv("LLM_MODEL_PHOTO_ANALYZER", ""),
 		LLMModelCallLogger:                getEnv("LLM_MODEL_CALL_LOGGER", ""),
 		LLMModelGatekeeper:                getEnv("LLM_MODEL_GATEKEEPER", ""),
 		LLMModelAuditor:                   getEnv("LLM_MODEL_AUDITOR", ""),

@@ -278,7 +278,6 @@ func TestLoadAgentWorkspaceSkipsPromptsForGoRenderedAgents(t *testing.T) {
 		{"gatekeeper", "gatekeeper prompt base (should be excluded)", ""},
 		{"calculator", "calculator prompt scope analyzer (should be excluded)", ""},
 		{"matchmaker", "matchmaker prompt base (should be excluded)", ""},
-		{"photo-analyzer", "photo analyzer prompt request (should be excluded)", "photo analyzer visual constraints"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agentName, func(t *testing.T) {
@@ -344,11 +343,6 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/support/auditor/SKILL.md":                          "---\nname: auditor\ndescription: Use when operational evidence must be audited.\nmetadata:\n  allowed-tools:\n    - SubmitAuditResult\n---\n\n# Auditor",
 		"agents/support/auditor/context.md":                        "auditor context",
 		"agents/support/auditor/skills/submit_audit_result.md":     "submit audit result skill",
-		"agents/support/photo_analyzer/SKILL.md":                   "---\nname: photo_analyzer\ndescription: Use when images need structured visual analysis.\nmetadata:\n  allowed-tools:\n    - SavePhotoAnalysis\n    - Calculator\n    - FlagOnsiteMeasurement\n---\n\n# Photo Analyzer",
-		"agents/support/photo_analyzer/context.md":                 "photo analyzer context",
-		"agents/support/photo_analyzer/skills/analyze_photos.md":              "photo analyzer skill",
-		"agents/support/photo_analyzer/skills/visual_analysis_constraints.md": "photo analyzer visual constraints",
-		"agents/support/photo_analyzer/prompts/request.md":                    "photo analyzer prompt request (should be excluded)",
 		"agents/support/call_logger/SKILL.md":                      "---\nname: call_logger\ndescription: Use when a rough call summary must become structured lead updates.\nmetadata:\n  allowed-tools:\n    - SaveNote\n    - UpdateLeadDetails\n    - SetCallOutcome\n    - UpdateStatus\n    - UpdatePipelineStage\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# Call Logger",
 		"agents/support/call_logger/context.md":                    "call logger context",
 		"agents/support/call_logger/prompts/base.md":               "call logger prompt base",

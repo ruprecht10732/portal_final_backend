@@ -17,7 +17,6 @@ type EventType string
 
 const (
 	EventAnalysisComplete      EventType = "analysis_complete"
-	EventPhotoAnalysisComplete EventType = "photo_analysis_complete"
 	EventLeadUpdated           EventType = "lead_updated"
 
 	// Lead/customer activity events (pushed to org members)

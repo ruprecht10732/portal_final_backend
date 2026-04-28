@@ -748,11 +748,10 @@ func (h *Handler) AttachWhatsAppMessageToLead(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.AttachWhatsAppMessageToLeadResponse{
-		Status:              "ok",
-		AttachmentID:        result.AttachmentID.String(),
-		LeadID:              result.LeadID.String(),
-		ServiceID:           result.ServiceID.String(),
-		PhotoAnalysisQueued: true,
+		Status:       "ok",
+		AttachmentID: result.AttachmentID.String(),
+		LeadID:       result.LeadID.String(),
+		ServiceID:    result.ServiceID.String(),
 	})
 }
 

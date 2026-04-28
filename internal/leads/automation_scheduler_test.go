@@ -3,12 +3,10 @@ package leads
 import (
 	"context"
 	"testing"
-	"time"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
-	"portal_final_backend/internal/leads/handler"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/scheduler"
@@ -21,8 +19,6 @@ type fakeAutomationScheduler struct {
 	gatekeeperPayloads []scheduler.GatekeeperRunPayload
 	estimatorPayloads  []scheduler.EstimatorRunPayload
 	dispatcherPayloads []scheduler.DispatcherRunPayload
-	photoPayloads      []scheduler.PhotoAnalysisPayload
-	photoDelays        []time.Duration
 	auditVisitPayloads []scheduler.AuditVisitReportPayload
 	auditCallPayloads  []scheduler.AuditCallLogPayload
 }
@@ -39,18 +35,6 @@ func (f *fakeAutomationScheduler) EnqueueEstimatorRun(_ context.Context, payload
 
 func (f *fakeAutomationScheduler) EnqueueDispatcherRun(_ context.Context, payload scheduler.DispatcherRunPayload) error {
 	f.dispatcherPayloads = append(f.dispatcherPayloads, payload)
-	return nil
-}
-
-func (f *fakeAutomationScheduler) EnqueuePhotoAnalysis(_ context.Context, payload scheduler.PhotoAnalysisPayload) error {
-	f.photoPayloads = append(f.photoPayloads, payload)
-	f.photoDelays = append(f.photoDelays, 0)
-	return nil
-}
-
-func (f *fakeAutomationScheduler) EnqueuePhotoAnalysisIn(_ context.Context, payload scheduler.PhotoAnalysisPayload, delay time.Duration) error {
-	f.photoPayloads = append(f.photoPayloads, payload)
-	f.photoDelays = append(f.photoDelays, delay)
 	return nil
 }
 
@@ -241,26 +225,6 @@ func TestEstimatorBlockerLoopScenarioQueuesEstimatorThenGatekeeperReplyReview(t 
 	}
 	if queue.gatekeeperPayloads[0].LeadServiceID != estimationEvt.LeadServiceID.String() {
 		t.Fatalf("unexpected gatekeeper lead service id: %#v", queue.gatekeeperPayloads[0])
-	}
-}
-
-func TestQueueOrRunPhotoAnalysisEnqueuesDelayedTaskWhenSchedulerConfigured(t *testing.T) {
-	queue := &fakeAutomationScheduler{}
-	module := &Module{automationQueue: queue, photoAnalysisHandler: &handler.PhotoAnalysisHandler{}}
-	leadID := uuid.New()
-	serviceID := uuid.New()
-	tenantID := uuid.New()
-
-	queueOrRunPhotoAnalysis(context.Background(), module, logger.New("development"), leadID, serviceID, tenantID)
-
-	if len(queue.photoPayloads) != 1 {
-		t.Fatalf("expected photo analysis job to be enqueued, got %d", len(queue.photoPayloads))
-	}
-	if queue.photoDelays[0] != 30*time.Second {
-		t.Fatalf("expected 30s enqueue delay, got %s", queue.photoDelays[0])
-	}
-	if queue.photoPayloads[0].LeadID != leadID.String() {
-		t.Fatalf("unexpected photo payload: %#v", queue.photoPayloads[0])
 	}
 }
 

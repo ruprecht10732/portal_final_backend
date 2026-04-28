@@ -21,7 +21,7 @@ const estimatorPromptInstruction = "Gebruik standaard afwerking"
 const quoteGeneratorPromptRequest = "Vervang voordeur inclusief scharnieren"
 const quoteGeneratorPromptEstimation = "Let op isolatie"
 
-func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.AppointmentVisitReport, []repository.Attachment, *repository.PhotoAnalysis) {
+func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.AppointmentVisitReport, []repository.Attachment) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
 	email := "jane@example.com"
 	noteText := "Klant wil teruggebeld worden na 18:00"
@@ -67,16 +67,11 @@ func testPromptFixtures() (repository.Lead, repository.LeadService, []repository
 		FileName: "plattegrond.pdf",
 	}}
 
-	photo := &repository.PhotoAnalysis{
-		Summary:         "Voordeur met zichtbare slijtage",
-		ConfidenceLevel: "High",
-	}
-
-	return lead, service, notes, visitReport, attachments, photo
+	return lead, service, notes, visitReport, attachments
 }
 
 func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:          lead,
 		service:       service,
@@ -84,7 +79,6 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 		visitReport:   visitReport,
 		intakeContext: gatekeeperIntakeRequirement,
 		attachments:   attachments,
-		photoAnalysis: photo,
 	})
 
 	checks := []string{
@@ -106,9 +100,7 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 }
 
 func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
-	photo.Measurements = []repository.Measurement{{Description: "breedte opening", Value: 0.93, Unit: "m", Type: "dimension", Confidence: "Low"}}
-	photo.NeedsOnsiteMeasurement = []string{"Exacte dagmaat ontbreekt"}
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:          lead,
@@ -117,7 +109,6 @@ func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
 		visitReport:   visitReport,
 		intakeContext: gatekeeperIntakeRequirement,
 		attachments:   attachments,
-		photoAnalysis: photo,
 	})
 
 	checks := []string{
@@ -134,8 +125,8 @@ func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
 }
 
 func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildScopeAnalyzerPrompt(lead, service, notes, photo)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildScopeAnalyzerPrompt(lead, service, notes)
 
 	checks := []string{
 		"Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.",
@@ -151,7 +142,7 @@ func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
 }
 
 func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:          lead,
 		service:       service,
@@ -159,7 +150,6 @@ func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 		visitReport:   visitReport,
 		intakeContext: gatekeeperIntakeRequirement,
 		attachments:   attachments,
-		photoAnalysis: photo,
 	})
 
 	checks := []string{
@@ -176,7 +166,7 @@ func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 }
 
 func TestBuildGatekeeperPromptUsesExplicitUntrustedDataMarkers(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:          lead,
 		service:       service,
@@ -184,7 +174,6 @@ func TestBuildGatekeeperPromptUsesExplicitUntrustedDataMarkers(t *testing.T) {
 		visitReport:   visitReport,
 		intakeContext: gatekeeperIntakeRequirement,
 		attachments:   attachments,
-		photoAnalysis: photo,
 	})
 
 	checks := []string{
@@ -208,7 +197,7 @@ func TestBuildGatekeeperPromptUsesExplicitUntrustedDataMarkers(t *testing.T) {
 }
 
 func TestBuildGatekeeperPromptIncludesPreviousEstimatorBlockers(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	confidence := 0.31
 	priorAnalysis := &repository.AIAnalysis{
 		RecommendedAction:   "RequestInfo",
@@ -230,7 +219,6 @@ func TestBuildGatekeeperPromptIncludesPreviousEstimatorBlockers(t *testing.T) {
 		intakeContext:     gatekeeperIntakeRequirement,
 		estimationContext: "Vraag ook om exacte breedte en hoogte voor de prijsberekening.",
 		attachments:       attachments,
-		photoAnalysis:     photo,
 		priorAnalysis:     priorAnalysis,
 	})
 
@@ -256,7 +244,7 @@ func TestBuildGatekeeperPromptIncludesPreviousEstimatorBlockers(t *testing.T) {
 }
 
 func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurements(t *testing.T) {
-	lead, service, _, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, _, visitReport, attachments := testPromptFixtures()
 	service.PipelineStage = "Nurturing"
 	notes := []repository.LeadNote{{
 		Type:      "message",
@@ -277,7 +265,6 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 		intakeContext:     gatekeeperIntakeRequirement,
 		estimationContext: estimatorPromptInstruction,
 		attachments:       attachments,
-		photoAnalysis:     photo,
 		priorAnalysis:     priorAnalysis,
 	})
 
@@ -296,7 +283,7 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 }
 
 func TestBuildGatekeeperPromptIncludesRecoveryModeForRepeatClarifications(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:               lead,
 		service:            service,
@@ -305,7 +292,6 @@ func TestBuildGatekeeperPromptIncludesRecoveryModeForRepeatClarifications(t *tes
 		intakeContext:      gatekeeperIntakeRequirement,
 		estimationContext:  estimatorPromptInstruction,
 		attachments:        attachments,
-		photoAnalysis:      photo,
 		nurturingLoopCount: 3,
 	})
 
@@ -324,7 +310,7 @@ func TestBuildGatekeeperPromptIncludesRecoveryModeForRepeatClarifications(t *tes
 }
 
 func TestBuildDispatcherPromptUsesQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
-	lead, service, _, _, _, _ := testPromptFixtures()
+	lead, service, _, _, _ := testPromptFixtures()
 	prompt := buildDispatcherPrompt(lead, service, 25, []uuid.UUID{uuid.New()})
 
 	checks := []string{
@@ -341,7 +327,7 @@ func TestBuildDispatcherPromptUsesQuotedReferenceDataAndToolOnlyContract(t *test
 }
 
 func TestBuildQuoteGeneratePromptUsesQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
-	lead, service, notes, _, _, _ := testPromptFixtures()
+	lead, service, notes, _, _ := testPromptFixtures()
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
@@ -358,7 +344,7 @@ func TestBuildQuoteGeneratePromptUsesQuotedReferenceDataAndToolOnlyContract(t *t
 }
 
 func TestBuildAuditPromptsUseQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
-	_, service, notes, visitReport, _, _ := testPromptFixtures()
+	_, service, notes, visitReport, _ := testPromptFixtures()
 	intakeContext := gatekeeperIntakeRequirement
 
 	visitPrompt := buildVisitReportAuditPrompt(service.ServiceType, intakeContext, visitReport, notes)
@@ -379,7 +365,7 @@ func TestBuildAuditPromptsUseQuotedReferenceDataAndToolOnlyContract(t *testing.T
 }
 
 func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:              lead,
 		service:           service,
@@ -388,7 +374,6 @@ func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
 		intakeContext:     gatekeeperIntakeRequirement,
 		estimationContext: estimatorPromptInstruction,
 		attachments:       attachments,
-		photoAnalysis:     photo,
 	})
 
 	checks := []string{
@@ -406,8 +391,8 @@ func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
 }
 
 func TestBuildInvestigativePromptIncludesSharedCommunicationContract(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildInvestigativePrompt(lead, service, notes, photo, []string{"Exacte breedte opening"}, estimatorPromptInstruction)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildInvestigativePrompt(lead, service, notes, []string{"Exacte breedte opening"}, estimatorPromptInstruction)
 
 	checks := []string{
 		"=== COMMUNICATION CONTRACT (CUSTOMER FACING) ===",
@@ -422,8 +407,8 @@ func TestBuildInvestigativePromptIncludesSharedCommunicationContract(t *testing.
 }
 
 func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, estimatorPromptInstruction, nil)
 
 	checks := []string{
 		"=== EXECUTION PRIORITY ===",
@@ -447,8 +432,8 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 }
 
 func TestBuildEstimatorPromptIncludesSingleExpressionMathExamples(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, estimatorPromptInstruction, nil)
 
 	checks := []string{
 		"[MANDATORY] Prefer one Calculator expression for subtotal + VAT + markup adjustments instead of chained calculator calls.",
@@ -464,8 +449,8 @@ func TestBuildEstimatorPromptIncludesSingleExpressionMathExamples(t *testing.T) 
 }
 
 func TestBuildEstimatorPromptAllowsPreliminaryRepairEstimateWhenMeasurementsAreConfirmatory(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, estimatorPromptInstruction, nil)
 
 	checks := []string{
 		"For repair, adjustment, diagnosis, inspection, or replacement work, missing secondary measurements are not critical blockers when the primary dimensions come from a trusted source (e.g. appointment measurement) and the quote can be framed as a bounded preliminary estimate with clear assumptions and on-site confirmation notes.",
@@ -480,7 +465,7 @@ func TestBuildEstimatorPromptAllowsPreliminaryRepairEstimateWhenMeasurementsAreC
 }
 
 func TestBuildGatekeeperPromptKeepsRepairConfirmationDetailsOutOfMissingInformation(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
 		lead:              lead,
 		service:           service,
@@ -489,7 +474,6 @@ func TestBuildGatekeeperPromptKeepsRepairConfirmationDetailsOutOfMissingInformat
 		intakeContext:     gatekeeperIntakeRequirement,
 		estimationContext: estimatorPromptInstruction,
 		attachments:       attachments,
-		photoAnalysis:     photo,
 	})
 
 	checks := []string{
@@ -505,8 +489,8 @@ func TestBuildGatekeeperPromptKeepsRepairConfirmationDetailsOutOfMissingInformat
 }
 
 func TestBuildEstimatorPromptRequiresConcreteQuantities(t *testing.T) {
-	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+	lead, service, notes, _, _ := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, estimatorPromptInstruction, nil)
 
 	checks := []string{
 		"[MANDATORY] Every DraftQuote line must include a concrete non-empty quantity string that matches the commercial unit, for example \"2 stuks\", \"6 meter\", \"1 set\", or \"3 uur\".",
@@ -522,7 +506,7 @@ func TestBuildEstimatorPromptRequiresConcreteQuantities(t *testing.T) {
 }
 
 func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
-	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompts := []string{
 		buildGatekeeperPrompt(gatekeeperPromptInput{
 			lead:          lead,
@@ -531,9 +515,8 @@ func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
 			visitReport:   visitReport,
 			intakeContext: gatekeeperIntakeRequirement,
 			attachments:   attachments,
-			photoAnalysis: photo,
 		}),
-		buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil),
+		buildQuoteBuilderPrompt(lead, service, notes, estimatorPromptInstruction, nil),
 		buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation),
 	}
 
@@ -553,7 +536,7 @@ func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
 }
 
 func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
-	lead, service, _, _, _, _ := testPromptFixtures()
+	lead, service, _, _, _ := testPromptFixtures()
 	prompt := buildDispatcherPrompt(lead, service, 25, nil)
 
 	checks := []string{
@@ -573,7 +556,7 @@ func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
 }
 
 func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
-	lead, service, notes, _, _, _ := testPromptFixtures()
+	lead, service, notes, _, _ := testPromptFixtures()
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
@@ -592,7 +575,7 @@ func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
 }
 
 func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing.T) {
-	lead, service, notes, _, _, _ := testPromptFixtures()
+	lead, service, notes, _, _ := testPromptFixtures()
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
@@ -609,7 +592,7 @@ func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing
 }
 
 func TestBuildQuoteGeneratePromptRequiresConcreteQuantities(t *testing.T) {
-	lead, service, notes, _, _, _ := testPromptFixtures()
+	lead, service, notes, _, _ := testPromptFixtures()
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{

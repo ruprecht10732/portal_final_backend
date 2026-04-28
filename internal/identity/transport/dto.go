@@ -107,13 +107,6 @@ type OrganizationSettingsResponse struct {
 	AICouncilConsensusMode                            string   `json:"aiCouncilConsensusMode"`
 	CatalogGapThreshold                               int      `json:"catalogGapThreshold"`
 	CatalogGapLookbackDays                            int      `json:"catalogGapLookbackDays"`
-	PhotoAnalysisPreprocessingEnabled                 bool     `json:"photoAnalysisPreprocessingEnabled"`
-	PhotoAnalysisOCRAssistEnabled                     bool     `json:"photoAnalysisOcrAssistEnabled"`
-	PhotoAnalysisOCRAssistServiceTypes                []string `json:"photoAnalysisOcrAssistServiceTypes"`
-	PhotoAnalysisLensCorrectionEnabled                bool     `json:"photoAnalysisLensCorrectionEnabled"`
-	PhotoAnalysisLensCorrectionServiceTypes           []string `json:"photoAnalysisLensCorrectionServiceTypes"`
-	PhotoAnalysisPerspectiveNormalizationEnabled      bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
-	PhotoAnalysisPerspectiveNormalizationServiceTypes []string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	NotificationEmail                                 *string  `json:"notificationEmail,omitempty"`
 	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
 	WhatsAppAccountJID                                *string  `json:"whatsAppAccountJid,omitempty"`
@@ -145,13 +138,6 @@ type UpdateOrganizationSettingsRequest struct {
 	AICouncilConsensusMode                            *string   `json:"aiCouncilConsensusMode" validate:"omitempty,oneof=weighted majority estimator_final"`
 	CatalogGapThreshold                               *int      `json:"catalogGapThreshold" validate:"omitempty,min=1,max=1000"`
 	CatalogGapLookbackDays                            *int      `json:"catalogGapLookbackDays" validate:"omitempty,min=1,max=365"`
-	PhotoAnalysisPreprocessingEnabled                 *bool     `json:"photoAnalysisPreprocessingEnabled"`
-	PhotoAnalysisOCRAssistEnabled                     *bool     `json:"photoAnalysisOcrAssistEnabled"`
-	PhotoAnalysisOCRAssistServiceTypes                *[]string `json:"photoAnalysisOcrAssistServiceTypes"`
-	PhotoAnalysisLensCorrectionEnabled                *bool     `json:"photoAnalysisLensCorrectionEnabled"`
-	PhotoAnalysisLensCorrectionServiceTypes           *[]string `json:"photoAnalysisLensCorrectionServiceTypes"`
-	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
-	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	WhatsAppToneOfVoice                               *string   `json:"whatsAppToneOfVoice" validate:"omitempty,min=3,max=255"`
 	WhatsAppDefaultReplyScenario                      *string   `json:"whatsAppDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`
 	EmailDefaultReplyScenario                         *string   `json:"emailDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`

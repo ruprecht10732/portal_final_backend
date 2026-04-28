@@ -511,30 +511,6 @@ type AppointmentReminderDue struct {
 
 func (e AppointmentReminderDue) EventName() string { return "appointments.appointment.reminder_due" }
 
-// ─── AI Analysis Domain Events ───────────────────────────────────────────────
-
-type PhotoAnalysisCompleted struct {
-	BaseEvent
-	LeadID        uuid.UUID `json:"leadId"`
-	LeadServiceID uuid.UUID `json:"leadServiceId"`
-	TenantID      uuid.UUID `json:"tenantId"`
-	PhotoCount    int       `json:"photoCount"`
-	Summary       string    `json:"summary"`
-}
-
-func (e PhotoAnalysisCompleted) EventName() string { return "ai.photo_analysis.completed" }
-
-type PhotoAnalysisFailed struct {
-	BaseEvent
-	LeadID        uuid.UUID `json:"leadId"`
-	LeadServiceID uuid.UUID `json:"leadServiceId"`
-	TenantID      uuid.UUID `json:"tenantId"`
-	ErrorCode     string    `json:"errorCode"`
-	ErrorMessage  string    `json:"errorMessage"`
-}
-
-func (e PhotoAnalysisFailed) EventName() string { return "ai.photo_analysis.failed" }
-
 // ─── Infrastructure Domain Events ────────────────────────────────────────────
 
 type NewEmailReceived struct {

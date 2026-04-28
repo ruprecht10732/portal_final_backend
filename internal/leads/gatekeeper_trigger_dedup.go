@@ -54,7 +54,6 @@ type gatekeeperTriggerFingerprintRepo interface {
 	GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
 	ListNotesByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]repository.LeadNote, error)
 	ListAttachmentsByService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]repository.Attachment, error)
-	GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (repository.PhotoAnalysis, error)
 	GetLatestAppointmentVisitReportByService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (*repository.AppointmentVisitReport, error)
 }
 
@@ -85,7 +84,6 @@ type gatekeeperTriggerSnapshot struct {
 	Service     gatekeeperServiceSnapshot      `json:"service"`
 	Notes       []gatekeeperNoteSnapshot       `json:"notes,omitempty"`
 	Attachments []gatekeeperAttachmentSummary  `json:"attachments,omitempty"`
-	Photo       *gatekeeperPhotoSnapshot       `json:"photo,omitempty"`
 	VisitReport *gatekeeperVisitReportSnapshot `json:"visitReport,omitempty"`
 }
 
@@ -120,16 +118,6 @@ type gatekeeperAttachmentSummary struct {
 	FileName    string `json:"fileName,omitempty"`
 	ContentType string `json:"contentType,omitempty"`
 	SizeBytes   int64  `json:"sizeBytes,omitempty"`
-}
-
-type gatekeeperPhotoSnapshot struct {
-	Summary                string   `json:"summary,omitempty"`
-	ScopeAssessment        string   `json:"scopeAssessment,omitempty"`
-	ConfidenceLevel        string   `json:"confidenceLevel,omitempty"`
-	PhotoCount             int      `json:"photoCount,omitempty"`
-	Observations           []string `json:"observations,omitempty"`
-	NeedsOnsiteMeasurement []string `json:"needsOnsiteMeasurement,omitempty"`
-	ExtractedText          []string `json:"extractedText,omitempty"`
 }
 
 type gatekeeperVisitReportSnapshot struct {
@@ -269,13 +257,6 @@ func buildGatekeeperTriggerFingerprint(ctx context.Context, repo gatekeeperTrigg
 		return "", err
 	}
 
-	var photo *repository.PhotoAnalysis
-	if current, photoErr := repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); photoErr == nil {
-		photo = &current
-	} else if !errors.Is(photoErr, repository.ErrPhotoAnalysisNotFound) {
-		return "", photoErr
-	}
-
 	visitReport, err := repo.GetLatestAppointmentVisitReportByService(ctx, serviceID, tenantID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return "", err
@@ -303,7 +284,6 @@ func buildGatekeeperTriggerFingerprint(ctx context.Context, repo gatekeeperTrigg
 		},
 		Notes:       summarizeGatekeeperNotes(notes),
 		Attachments: summarizeGatekeeperAttachments(attachments),
-		Photo:       summarizeGatekeeperPhoto(photo),
 		VisitReport: summarizeGatekeeperVisitReport(visitReport),
 	}
 
@@ -424,24 +404,6 @@ func summarizeGatekeeperAttachments(attachments []repository.Attachment) []gatek
 		return items[i].SizeBytes < items[j].SizeBytes
 	})
 	return items
-}
-
-func summarizeGatekeeperPhoto(photo *repository.PhotoAnalysis) *gatekeeperPhotoSnapshot {
-	if photo == nil {
-		return nil
-	}
-	observations := sortedNormalizedCopy(photo.Observations)
-	needsOnsite := sortedNormalizedCopy(photo.NeedsOnsiteMeasurement)
-	extractedText := sortedNormalizedCopy(photo.ExtractedText)
-	return &gatekeeperPhotoSnapshot{
-		Summary:                normalizeTriggerText(photo.Summary),
-		ScopeAssessment:        normalizeTriggerText(photo.ScopeAssessment),
-		ConfidenceLevel:        normalizeTriggerText(photo.ConfidenceLevel),
-		PhotoCount:             photo.PhotoCount,
-		Observations:           observations,
-		NeedsOnsiteMeasurement: needsOnsite,
-		ExtractedText:          extractedText,
-	}
 }
 
 func summarizeGatekeeperVisitReport(report *repository.AppointmentVisitReport) *gatekeeperVisitReportSnapshot {

@@ -36,8 +36,6 @@ func subscribeOrchestratorEvents(eventBus events.Bus, o *Orchestrator) {
 	eventBus.Subscribe(events.LeadDataChanged{}.EventName(), typedHandler(func(ctx context.Context, evt events.LeadDataChanged) {
 		o.OnDataChange(ctx, evt)
 	}))
-	eventBus.Subscribe(events.PhotoAnalysisCompleted{}.EventName(), typedHandler(o.OnPhotoAnalysisCompleted))
-	eventBus.Subscribe(events.PhotoAnalysisFailed{}.EventName(), typedHandler(o.OnPhotoAnalysisFailed))
 	eventBus.Subscribe(events.VisitReportSubmitted{}.EventName(), typedHandler(o.OnVisitReportSubmitted))
 }
 

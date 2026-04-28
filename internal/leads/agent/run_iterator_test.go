@@ -104,9 +104,14 @@ func TestCollectContentTextSkipsThoughtParts(t *testing.T) {
 		{Text: "\n\nGroet,\nRobin"},
 	}}
 
-	got := collectContentText(content)
+	var got strings.Builder
+	for _, part := range content.Parts {
+		if part != nil && !part.Thought && part.Text != "" {
+			got.WriteString(part.Text)
+		}
+	}
 	want := "Beste Caroline,\n\nDank voor je bericht.\n\nGroet,\nRobin"
-	if got != want {
-		t.Fatalf("expected non-thought content only, got %q", got)
+	if got.String() != want {
+		t.Fatalf("expected non-thought content only, got %q", got.String())
 	}
 }

@@ -207,11 +207,10 @@ type WhatsAppMediaDownloadResponse struct {
 }
 
 type AttachWhatsAppMessageToLeadResponse struct {
-	Status              string `json:"status"`
-	AttachmentID        string `json:"attachmentId"`
-	LeadID              string `json:"leadId"`
-	ServiceID           string `json:"serviceId"`
-	PhotoAnalysisQueued bool   `json:"photoAnalysisQueued"`
+	Status       string `json:"status"`
+	AttachmentID string `json:"attachmentId"`
+	LeadID       string `json:"leadId"`
+	ServiceID    string `json:"serviceId"`
 }
 
 type SaveWhatsAppMessagesToLeadResponse struct {

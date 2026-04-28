@@ -387,13 +387,6 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			AppointmentRelatedReplyScenario:                   leadsports.NormalizeReplySuggestionScenario(settings.AppointmentRelatedReplyScenario),
 			CatalogGapThreshold:                               settings.CatalogGapThreshold,
 			CatalogGapLookbackDays:                            settings.CatalogGapLookbackDays,
-			PhotoAnalysisPreprocessingEnabled:                 settings.PhotoAnalysisPreprocessingEnabled,
-			PhotoAnalysisOCRAssistEnabled:                     settings.PhotoAnalysisOCRAssistEnabled,
-			PhotoAnalysisOCRAssistServiceTypes:                settings.PhotoAnalysisOCRAssistServiceTypes,
-			PhotoAnalysisLensCorrectionEnabled:                settings.PhotoAnalysisLensCorrectionEnabled,
-			PhotoAnalysisLensCorrectionServiceTypes:           settings.PhotoAnalysisLensCorrectionServiceTypes,
-			PhotoAnalysisPerspectiveNormalizationEnabled:      settings.PhotoAnalysisPerspectiveNormalizationEnabled,
-			PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 			DailyDigestEnabled:                                settings.DailyDigestEnabled,
 		}, nil
 	})
