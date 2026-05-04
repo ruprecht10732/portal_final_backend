@@ -109,7 +109,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 
 	var quote *ports.PublicQuoteSummary
 	if h.quoteViewer != nil {
-		quote, _ = h.quoteViewer.GetActiveQuoteForService(c.Request.Context(), svc.ID, lead.OrganizationID)
+		quote, _ = h.quoteViewer.GetActiveQuote(c.Request.Context(), lead.ID, lead.OrganizationID)
 	}
 
 	appt, pendingAppt := h.resolvePublicAppointments(c.Request.Context(), lead.ID, lead.OrganizationID)
