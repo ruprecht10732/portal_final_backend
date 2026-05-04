@@ -154,6 +154,9 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 	if err != nil {
 		return nil, fmt.Errorf("read response from %s: %w", path, err)
 	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("gotenberg %s returned empty body", path)
+	}
 	return result, nil
 }
 

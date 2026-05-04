@@ -1,14 +1,21 @@
 package handler
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+
+	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
 )
 
 func servePDFBytes(c *gin.Context, quoteNumber string, pdfBytes []byte) {
+	if err := validatePDFBytes(pdfBytes); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to serve PDF", err.Error())
+		return
+	}
 	setPDFHeaders(c, quoteNumber)
 	c.Data(http.StatusOK, contentTypePDF, pdfBytes)
 }
@@ -16,12 +23,23 @@ func servePDFBytes(c *gin.Context, quoteNumber string, pdfBytes []byte) {
 func streamPDFFromReader(c *gin.Context, quoteNumber string, reader io.ReadCloser) {
 	defer func() { _ = reader.Close() }()
 
-	setPDFHeaders(c, quoteNumber)
-	c.Status(http.StatusOK)
-
-	if _, err := io.Copy(c.Writer, reader); err != nil {
-		_ = c.Error(err)
+	pdfBytes, err := io.ReadAll(reader)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to read PDF", err.Error())
+		return
 	}
+
+	servePDFBytes(c, quoteNumber, pdfBytes)
+}
+
+func validatePDFBytes(pdfBytes []byte) error {
+	if len(pdfBytes) == 0 {
+		return fmt.Errorf("PDF is empty")
+	}
+	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-")) {
+		return fmt.Errorf("PDF has invalid structure")
+	}
+	return nil
 }
 
 func setPDFHeaders(c *gin.Context, quoteNumber string) {

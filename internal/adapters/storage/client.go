@@ -115,6 +115,14 @@ func (s *MinIOService) GenerateDownloadURL(ctx context.Context, bucket, fileKey 
 // DownloadFile downloads a file directly from storage.
 // The caller is responsible for closing the returned io.ReadCloser.
 func (s *MinIOService) DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error) {
+	stat, err := s.client.StatObject(ctx, bucket, fileKey, minio.StatObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat object %s: %w", fileKey, err)
+	}
+	if stat.Size == 0 {
+		return nil, fmt.Errorf("object %s is empty", fileKey)
+	}
+
 	obj, err := s.client.GetObject(ctx, bucket, fileKey, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object %s: %w", fileKey, err)
