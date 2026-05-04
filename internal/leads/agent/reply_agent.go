@@ -11,13 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 )
@@ -133,43 +131,23 @@ func (a *ReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.Whats
 }
 
 func (a *ReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
-	kimi := openaicompat.NewModel(a.modelConfig)
 	workspace := "whatsapp-reply"
-	agentName := "WhatsAppReplyAgent"
+	name := "WhatsAppReplyAgent"
 	description := "Suggests a single WhatsApp reply draft grounded in lead and conversation context."
 	systemPrompt := whatsappReplySystemPrompt(toneOfVoice)
-	runnerErrMsg := "failed to create whatsapp reply runner"
 	if a.channel == "email" {
 		workspace = "email-reply"
-		agentName = "EmailReplyAgent"
+		name = "EmailReplyAgent"
 		description = "Suggests a single email reply draft grounded in lead and service context."
 		systemPrompt = emailReplySystemPrompt(toneOfVoice)
-		runnerErrMsg = "failed to create email reply runner"
 	}
-	instruction, err := orchestration.BuildAgentInstruction(workspace, systemPrompt)
+
+	builder, err := NewLazyRunnerBuilder(name, description, workspace, a.appName, a.modelConfig, a.sessionService, systemPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s reply workspace context: %w", a.channel, err)
 	}
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        agentName,
-		Model:       kimi,
-		Description: description,
-		Instruction: instruction,
-	})
-	if err != nil {
-		return nil, err
-	}
 
-	r, err := runner.New(runner.Config{
-		AppName:        a.appName,
-		SessionService: a.sessionService,
-		Agent:          adkAgent,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", runnerErrMsg, err)
-	}
-
-	return r, nil
+	return builder.Runner()
 }
 
 func (a *ReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {

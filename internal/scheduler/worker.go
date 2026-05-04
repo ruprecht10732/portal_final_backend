@@ -81,11 +81,7 @@ type TaskReminderProcessor interface {
 }
 
 type LeadAutomationProcessor interface {
-	ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
-	ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
-	ProcessDispatcherRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
-	ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error
-	ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
+	ProcessAgentTask(ctx context.Context, payload AgentTaskPayload) error
 }
 
 type WAAgentVoiceTranscriptionProcessor interface {
@@ -171,11 +167,12 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskAnalyzeSubsidy, w.handleSubsidyAnalyzerJob)
 	mux.HandleFunc(TaskGeneratePartnerOfferSummary, w.handlePartnerOfferSummary)
 	mux.HandleFunc(TaskGeneratePartnerOfferPDF, w.handlePartnerOfferPDF)
-	mux.HandleFunc(TaskRunGatekeeper, w.handleGatekeeperRun)
-	mux.HandleFunc(TaskRunEstimator, w.handleEstimatorRun)
-	mux.HandleFunc(TaskRunDispatcher, w.handleDispatcherRun)
-	mux.HandleFunc(TaskAuditVisitReport, w.handleAuditVisitReport)
-	mux.HandleFunc(TaskAuditCallLog, w.handleAuditCallLog)
+	mux.HandleFunc(TaskRunGatekeeper, w.handleAgentTask)
+	mux.HandleFunc(TaskRunEstimator, w.handleAgentTask)
+	mux.HandleFunc(TaskRunDispatcher, w.handleAgentTask)
+	mux.HandleFunc(TaskAuditVisitReport, w.handleAgentTask)
+	mux.HandleFunc(TaskAuditCallLog, w.handleAgentTask)
+	mux.HandleFunc(TaskAgentRun, w.handleAgentTask)
 	mux.HandleFunc(TaskWAAgentVoiceTranscription, w.handleWAAgentVoiceTranscription)
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
@@ -794,99 +791,17 @@ func (w *Worker) handlePartnerOfferSummary(ctx context.Context, task *asynq.Task
 	return nil
 }
 
-func (w *Worker) handleGatekeeperRun(ctx context.Context, task *asynq.Task) error {
+func (w *Worker) handleAgentTask(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
 		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
-	payload, err := ParseGatekeeperRunPayload(task)
+	payload, err := ParseAgentTaskPayload(task)
 	if err != nil {
 		return err
 	}
 
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	return w.leadsAI.ProcessGatekeeperRun(ctx, leadID, serviceID, tenantID)
-}
-
-func (w *Worker) handleEstimatorRun(ctx context.Context, task *asynq.Task) error {
-	if w.leadsAI == nil {
-		return errors.New(errLeadAutomationProcessorNotConfigured)
-	}
-
-	payload, err := ParseEstimatorRunPayload(task)
-	if err != nil {
-		return err
-	}
-
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	return w.leadsAI.ProcessEstimatorRun(ctx, leadID, serviceID, tenantID, payload.Force)
-}
-
-func (w *Worker) handleDispatcherRun(ctx context.Context, task *asynq.Task) error {
-	if w.leadsAI == nil {
-		return errors.New(errLeadAutomationProcessorNotConfigured)
-	}
-
-	payload, err := ParseDispatcherRunPayload(task)
-	if err != nil {
-		return err
-	}
-
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	return w.leadsAI.ProcessDispatcherRun(ctx, leadID, serviceID, tenantID)
-}
-
-func (w *Worker) handleAuditVisitReport(ctx context.Context, task *asynq.Task) error {
-	if w.leadsAI == nil {
-		return errors.New(errLeadAutomationProcessorNotConfigured)
-	}
-
-	payload, err := ParseAuditVisitReportPayload(task)
-	if err != nil {
-		return err
-	}
-
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	appointmentID, err := uuid.Parse(payload.AppointmentID)
-	if err != nil {
-		return err
-	}
-
-	return w.leadsAI.ProcessAuditVisitReportJob(ctx, leadID, serviceID, tenantID, appointmentID)
-}
-
-func (w *Worker) handleAuditCallLog(ctx context.Context, task *asynq.Task) error {
-	if w.leadsAI == nil {
-		return errors.New(errLeadAutomationProcessorNotConfigured)
-	}
-
-	payload, err := ParseAuditCallLogPayload(task)
-	if err != nil {
-		return err
-	}
-
-	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
-	if err != nil {
-		return err
-	}
-
-	return w.leadsAI.ProcessAuditCallLogJob(ctx, leadID, serviceID, tenantID)
+	return w.leadsAI.ProcessAgentTask(ctx, payload)
 }
 
 func (w *Worker) handleIMAPSyncAccount(ctx context.Context, task *asynq.Task) error {

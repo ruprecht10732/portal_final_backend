@@ -106,17 +106,17 @@ func TestMaybeEnqueueEstimatorRunSkipsUnchangedFingerprint(t *testing.T) {
 	if !maybeEnqueueEstimatorRun(estimatorEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, force: false, source: "pipeline_stage_change"}) {
 		t.Fatalf("expected duplicate estimator trigger to be handled")
 	}
-	if len(queue.estimatorPayloads) != 1 {
-		t.Fatalf("expected unchanged estimator rerun to be skipped, got %d enqueues", len(queue.estimatorPayloads))
+	if len(queue.estimatorPayloads()) != 1 {
+		t.Fatalf("expected unchanged estimator rerun to be skipped, got %d enqueues", len(queue.estimatorPayloads()))
 	}
-	if queue.estimatorPayloads[0].Fingerprint == "" {
+	if queue.estimatorPayloads()[0].Fingerprint == "" {
 		t.Fatalf("expected estimator fingerprint to be populated")
 	}
 
 	repo.analysis.Summary = "Klaar voor offerte met extra detail"
 	maybeEnqueueEstimatorRun(estimatorEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, force: false, source: "analysis_updated"})
-	if len(queue.estimatorPayloads) != 2 {
-		t.Fatalf("expected material estimator change to enqueue a second run, got %d", len(queue.estimatorPayloads))
+	if len(queue.estimatorPayloads()) != 2 {
+		t.Fatalf("expected material estimator change to enqueue a second run, got %d", len(queue.estimatorPayloads()))
 	}
 }
 
@@ -135,10 +135,10 @@ func TestMaybeEnqueueEstimatorRunBypassesDedupeWhenForced(t *testing.T) {
 	maybeEnqueueEstimatorRun(estimatorEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, force: true, source: "manual_force"})
 	maybeEnqueueEstimatorRun(estimatorEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, force: true, source: "manual_force"})
 
-	if len(queue.estimatorPayloads) != 2 {
-		t.Fatalf("expected forced estimator runs to bypass dedupe, got %d enqueues", len(queue.estimatorPayloads))
+	if len(queue.estimatorPayloads()) != 2 {
+		t.Fatalf("expected forced estimator runs to bypass dedupe, got %d enqueues", len(queue.estimatorPayloads()))
 	}
-	if queue.estimatorPayloads[0].Fingerprint != "" || queue.estimatorPayloads[1].Fingerprint != "" {
+	if queue.estimatorPayloads()[0].Fingerprint != "" || queue.estimatorPayloads()[1].Fingerprint != "" {
 		t.Fatalf("expected forced estimator payloads to omit semantic fingerprint")
 	}
 }
@@ -171,16 +171,16 @@ func TestMaybeEnqueueDispatcherRunSkipsUnchangedFingerprint(t *testing.T) {
 	if !maybeEnqueueDispatcherRun(dispatcherEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "partner_offer_expired"}) {
 		t.Fatalf("expected duplicate dispatcher trigger to be handled")
 	}
-	if len(queue.dispatcherPayloads) != 1 {
-		t.Fatalf("expected unchanged dispatcher rerun to be skipped, got %d enqueues", len(queue.dispatcherPayloads))
+	if len(queue.dispatcherPayloads()) != 1 {
+		t.Fatalf("expected unchanged dispatcher rerun to be skipped, got %d enqueues", len(queue.dispatcherPayloads()))
 	}
-	if queue.dispatcherPayloads[0].Fingerprint == "" {
+	if queue.dispatcherPayloads()[0].Fingerprint == "" {
 		t.Fatalf("expected dispatcher fingerprint to be populated")
 	}
 
 	repo.excludedPartnerIDs = []uuid.UUID{uuid.New()}
 	maybeEnqueueDispatcherRun(dispatcherEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "partner_offer_rejected"})
-	if len(queue.dispatcherPayloads) != 2 {
-		t.Fatalf("expected changed dispatcher exclusions to enqueue a second run, got %d", len(queue.dispatcherPayloads))
+	if len(queue.dispatcherPayloads()) != 2 {
+		t.Fatalf("expected changed dispatcher exclusions to enqueue a second run, got %d", len(queue.dispatcherPayloads()))
 	}
 }

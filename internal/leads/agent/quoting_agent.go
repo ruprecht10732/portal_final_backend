@@ -134,14 +134,6 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode, sessionServi
 	profile := mode.profile()
 	modelConfig := cfg.ModelConfig
 	llm := BuildLLM(modelConfig)
-	workspace, err := orchestration.LoadAgentWorkspace(profile.workspace)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load %s workspace context: %w", profile.workspace, err)
-	}
-	instruction, err := orchestration.BuildAgentInstruction(profile.workspace, "Follow prompt instructions and return tool calls only.")
-	if err != nil {
-		return nil, fmt.Errorf("failed to build %s agent instruction: %w", profile.workspace, err)
-	}
 
 	deps := &ToolDependencies{
 		Repo:                 cfg.Repo,
@@ -160,40 +152,32 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode, sessionServi
 	if err != nil {
 		return nil, err
 	}
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, profile.appName+"_tools", tools)
-	toolsets = applyRBACToolsets(toolsets)
 
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        profile.name,
-		Model:       llm,
-		Description: profile.description,
-		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
-	})
+	kit, err := BuildAgentKit(
+		profile.name,
+		profile.description,
+		profile.workspace,
+		profile.appName,
+		llm,
+		sessionService,
+		tools,
+		"Follow prompt instructions and return tool calls only.",
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create %s agent: %w", mode, err)
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        profile.appName,
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create %s runner: %w", mode, err)
+		return nil, err
 	}
 
 	return &QuotingAgent{
-		agent:          adkAgent,
-		runner:         r,
+		agent:          kit.Agent,
+		runner:         kit.Runner,
 		sessionService: sessionService,
 		appName:        profile.appName,
 		modelConfig:    modelConfig,
 		repo:           cfg.Repo,
 		toolDeps:       deps,
 		mode:           mode,
-		workspace:      workspace,
-		instruction:    instruction,
+		workspace:      kit.Workspace,
+		instruction:    kit.Instruction,
 	}, nil
 }
 
@@ -228,7 +212,7 @@ func buildQuotingTools(deps *ToolDependencies, mode quotingAgentMode) ([]tool.To
 		return nil, fmt.Errorf("failed to build Calculator tool: %w", err)
 	}
 
-	draftQuoteTool, err := createDraftQuoteTool(deps)
+	draftQuoteTool, err := createDraftQuoteTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
 	}
@@ -241,17 +225,17 @@ func buildQuotingTools(deps *ToolDependencies, mode quotingAgentMode) ([]tool.To
 			return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
 		}
 
-		saveEstimationTool, err := createSaveEstimationTool(deps)
+		saveEstimationTool, err := createSaveEstimationTool()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build SaveEstimation tool: %w", err)
 		}
 
-		updateStageTool, err := createUpdatePipelineStageTool(deps)
+		updateStageTool, err := createUpdatePipelineStageTool()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 		}
 
-		listCatalogGapsTool, err := createListCatalogGapsTool(deps)
+		listCatalogGapsTool, err := createListCatalogGapsTool()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build ListCatalogGaps tool: %w", err)
 		}
@@ -260,7 +244,7 @@ func buildQuotingTools(deps *ToolDependencies, mode quotingAgentMode) ([]tool.To
 	}
 
 	if deps.IsProductSearchEnabled() {
-		searchTool, err := createSearchProductMaterialsTool(deps)
+		searchTool, err := createSearchProductMaterialsTool()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build SearchProductMaterials tool: %w", err)
 		}
@@ -274,55 +258,27 @@ func buildQuotingTools(deps *ToolDependencies, mode quotingAgentMode) ([]tool.To
 }
 
 func (q *QuotingAgent) buildScopeAnalyzerTools() ([]tool.Tool, error) {
-	commitScopeTool, err := createCommitScopeArtifactTool(q.toolDeps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build CommitScopeArtifact tool: %w", err)
-	}
-	return []tool.Tool{commitScopeTool}, nil
+	return buildToolsFrom(createCommitScopeArtifactTool)
 }
 
 func (q *QuotingAgent) buildInvestigativeTools() ([]tool.Tool, error) {
-	askClarificationTool, err := createAskCustomerClarificationTool(q.toolDeps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build AskCustomerClarification tool: %w", err)
-	}
-	return []tool.Tool{askClarificationTool}, nil
+	return buildToolsFrom(createAskCustomerClarificationTool)
 }
 
 func (q *QuotingAgent) buildQuoteCriticTools() ([]tool.Tool, error) {
-	criticTool, err := createSubmitQuoteCritiqueTool(q.toolDeps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build SubmitQuoteCritique tool: %w", err)
-	}
-	return []tool.Tool{criticTool}, nil
+	return buildToolsFrom(createSubmitQuoteCritiqueTool)
 }
 
 func (q *QuotingAgent) buildQuoteRepairTools() ([]tool.Tool, error) {
-	calculatorTool, err := createCalculatorTool()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Calculator tool: %w", err)
+	creators := []func() (tool.Tool, error){
+		createCalculatorTool,
+		createDraftQuoteTool,
+		createCalculateEstimateTool,
 	}
-
-	draftQuoteTool, err := createDraftQuoteTool(q.toolDeps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
-	}
-
-	calculateEstimateTool, err := createCalculateEstimateTool()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
-	}
-
-	tools := []tool.Tool{calculatorTool, draftQuoteTool, calculateEstimateTool}
 	if q.toolDeps.IsProductSearchEnabled() {
-		searchTool, searchErr := createSearchProductMaterialsTool(q.toolDeps)
-		if searchErr != nil {
-			return nil, fmt.Errorf("failed to build SearchProductMaterials tool: %w", searchErr)
-		}
-		tools = append(tools, searchTool)
+		creators = append(creators, createSearchProductMaterialsTool)
 	}
-
-	return tools, nil
+	return buildToolsFrom(creators...)
 }
 
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader.

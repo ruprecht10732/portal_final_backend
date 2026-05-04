@@ -14,21 +14,11 @@ import (
 )
 
 func createFindMatchingPartnersTool() (tool.Tool, error) {
-	return apptools.NewFindMatchingPartnersTool(func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return FindMatchingPartnersOutput{}, err
-		}
-		return handleFindMatchingPartners(ctx, deps, input)
-	})
+	return apptools.NewFindMatchingPartnersTool(withDeps(handleFindMatchingPartners))
 }
 
 func createCreatePartnerOfferTool() (tool.Tool, error) {
-	return apptools.NewCreatePartnerOfferTool(func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return CreatePartnerOfferOutput{}, err
-		}
+	return apptools.NewCreatePartnerOfferTool(withDeps(func(ctx tool.Context, deps *ToolDependencies, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
 		if deps.OfferCreator == nil {
 			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
 		}
@@ -58,7 +48,7 @@ func createCreatePartnerOfferTool() (tool.Tool, error) {
 
 		deps.MarkOfferCreated()
 		return CreatePartnerOfferOutput{Success: true, Message: "Offer created", OfferID: result.OfferID.String(), PublicToken: result.PublicToken}, nil
-	})
+	}))
 }
 
 func handleFindMatchingPartners(ctx tool.Context, deps *ToolDependencies, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {

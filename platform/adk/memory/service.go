@@ -28,9 +28,9 @@ type Service struct {
 
 func NewService(pool memorydb.DBTX, embedCfg embeddings.Config, llmAPIKey string, llmModel string, log *logger.Logger) (*Service, error) {
 	embedClient := embeddings.NewClient(embedCfg)
-	
+
 	genaiClient, err := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey:  llmAPIKey,
+		APIKey: llmAPIKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create genai client: %w", err)
@@ -122,16 +122,16 @@ func (s *Service) summarizeSession(ctx context.Context, sess session.Session) (s
 	var builder strings.Builder
 	for event := range sess.Events().All() {
 		if event.Content != nil {
-			builder.WriteString(fmt.Sprintf("%s: ", event.Content.Role))
+			fmt.Fprintf(&builder, "%s: ", event.Content.Role)
 			for _, part := range event.Content.Parts {
 				if part.Text != "" {
 					builder.WriteString(part.Text)
 				}
 				if part.FunctionCall != nil {
-					builder.WriteString(fmt.Sprintf("[Call %s]", part.FunctionCall.Name))
+					fmt.Fprintf(&builder, "[Call %s]", part.FunctionCall.Name)
 				}
 				if part.FunctionResponse != nil {
-					builder.WriteString(fmt.Sprintf("[Response %s]", part.FunctionResponse.Name))
+					fmt.Fprintf(&builder, "[Response %s]", part.FunctionResponse.Name)
 				}
 			}
 			builder.WriteString("\n")

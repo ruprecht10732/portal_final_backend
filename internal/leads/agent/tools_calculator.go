@@ -16,12 +16,8 @@ import (
 	apptools "portal_final_backend/internal/tools"
 )
 
-func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewSaveEstimationTool(func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return SaveEstimationOutput{}, err
-		}
+func createSaveEstimationTool() (tool.Tool, error) {
+	return apptools.NewSaveEstimationTool(withDeps(func(ctx tool.Context, deps *ToolDependencies, input SaveEstimationInput) (SaveEstimationOutput, error) {
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return SaveEstimationOutput{Success: false, Message: missingTenantContextMessage}, err
@@ -66,15 +62,11 @@ func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 		deps.MarkSaveEstimationCalled()
 
 		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil
-	})
+	}))
 }
 
-func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewCommitScopeArtifactTool(func(ctx tool.Context, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return CommitScopeArtifactOutput{}, err
-		}
+func createCommitScopeArtifactTool() (tool.Tool, error) {
+	return apptools.NewCommitScopeArtifactTool(withDeps(func(_ tool.Context, deps *ToolDependencies, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
 		artifact := input.Artifact
 		if len(artifact.MissingDimensions) > 0 {
 			artifact.IsComplete = false
@@ -84,15 +76,11 @@ func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
 		}
 		deps.SetScopeArtifact(artifact)
 		return CommitScopeArtifactOutput{Success: true, Message: "Scope artifact opgeslagen"}, nil
-	})
+	}))
 }
 
-func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewAskCustomerClarificationTool(func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return AskCustomerClarificationOutput{}, err
-		}
+func createAskCustomerClarificationTool() (tool.Tool, error) {
+	return apptools.NewAskCustomerClarificationTool(withDeps(func(ctx tool.Context, deps *ToolDependencies, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return AskCustomerClarificationOutput{Success: false, Message: missingTenantContextMessage}, err
@@ -134,7 +122,7 @@ func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) 
 		deps.MarkClarificationAsked()
 		log.Printf("estimator AskCustomerClarification: run=%s lead=%s service=%s missing=%d", deps.GetRunID(), leadID, serviceID, len(input.MissingDimensions))
 		return AskCustomerClarificationOutput{Success: true, Message: "Verduidelijkingsvraag opgeslagen"}, nil
-	})
+	}))
 }
 
 // handleCalculator evaluates a single arithmetic operation deterministically.
@@ -424,11 +412,7 @@ Examples:
 const MaxSafeUnitPrice = 5_000_000.00
 
 func createCalculateEstimateTool() (tool.Tool, error) {
-	return apptools.NewCalculateEstimateTool(func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return CalculateEstimateOutput{}, err
-		}
+	return apptools.NewCalculateEstimateTool(withDeps(func(_ tool.Context, deps *ToolDependencies, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
 		if err := validateCalculateEstimateInput(input); err != nil {
 			return CalculateEstimateOutput{}, err
 		}
@@ -446,7 +430,7 @@ func createCalculateEstimateTool() (tool.Tool, error) {
 		})
 
 		return buildCalculateEstimateOutput(materialCents, laborLowCents, laborHighCents, extraCents), nil
-	})
+	}))
 }
 
 func isInvalidFloat(v float64) bool {

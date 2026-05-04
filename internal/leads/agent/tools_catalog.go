@@ -196,14 +196,8 @@ func handleListCatalogGaps(ctx tool.Context, deps *ToolDependencies, input ListC
 	return buildListCatalogGapsOutput(params, misses, adHoc), nil
 }
 
-func createListCatalogGapsTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewListCatalogGapsTool(func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return ListCatalogGapsOutput{}, err
-		}
-		return handleListCatalogGaps(ctx, deps, input)
-	})
+func createListCatalogGapsTool() (tool.Tool, error) {
+	return apptools.NewListCatalogGapsTool(withDeps(handleListCatalogGaps))
 }
 
 // resolveSearchParams extracts and normalises the search parameters from input.
@@ -1149,12 +1143,6 @@ func mergeOptionalString(dst *string, src string) {
 	}
 }
 
-func createSearchProductMaterialsTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewSearchProductMaterialsTool(func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return SearchProductMaterialsOutput{}, err
-		}
-		return handleSearchProductMaterials(ctx, deps, input)
-	})
+func createSearchProductMaterialsTool() (tool.Tool, error) {
+	return apptools.NewSearchProductMaterialsTool(withDeps(handleSearchProductMaterials))
 }

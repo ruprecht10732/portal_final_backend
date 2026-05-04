@@ -11,10 +11,8 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters/storage"
-	catalogrepo "portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/leads/adapters"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/handler"
@@ -51,13 +49,9 @@ type Module struct {
 	publicHandler         *handler.PublicHandler
 	management            *management.Service
 	notes                 *notes.Service
-	gatekeeper            *agent.Gatekeeper
-	estimator             agent.Estimator
-	dispatcher            *agent.Dispatcher
-	auditor               *agent.Auditor
+	runtime               *agent.Runtime
 	orchestrator          *Orchestrator
 	callLogger            *agent.CallLogger
-	quoteGenerator        agent.QuoteGenerator
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	replyAgent            *agent.ReplyAgent
 	staleReEngagement     *maintenance.StaleLeadReEngagementService
@@ -78,10 +72,9 @@ type Module struct {
 }
 
 type AutomationScheduler interface {
-	scheduler.GatekeeperScheduler
-	scheduler.EstimatorScheduler
-	scheduler.DispatcherScheduler
-	scheduler.AuditorScheduler
+	scheduler.AgentTaskScheduler
+	scheduler.CallLogScheduler
+	scheduler.StaleLeadReEngageScheduler
 }
 
 type ModuleDeps struct {
@@ -92,26 +85,16 @@ type ModuleDeps struct {
 }
 
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader into
-// the orchestrator and lead agents that need to respect org-level automation
-// toggles and catalog gap heuristics.
+// the runtime and orchestrator.
 func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	if m == nil {
 		return
 	}
+	if m.runtime != nil {
+		m.runtime.SetOrganizationAISettingsReader(reader)
+	}
 	if m.orchestrator != nil {
 		m.orchestrator.SetOrganizationAISettingsReader(reader)
-	}
-	if m.gatekeeper != nil {
-		m.gatekeeper.SetOrganizationAISettingsReader(reader)
-	}
-	if m.estimator != nil {
-		m.estimator.SetOrganizationAISettingsReader(reader)
-	}
-	if m.dispatcher != nil {
-		m.dispatcher.SetOrganizationAISettingsReader(reader)
-	}
-	if m.quoteGenerator != nil {
-		m.quoteGenerator.SetOrganizationAISettingsReader(reader)
 	}
 	if m.replyAgent != nil {
 		m.replyAgent.SetOrganizationAISettingsReader(reader)
@@ -130,11 +113,6 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	// Create shared repository
 	repo := repository.New(pool)
 
-	// Leads agents need to safely hydrate catalog items from DB.
-	// Draft products are excluded by the adapter.
-	catalogRepo := catalogrepo.New(pool)
-	catalogReader := adapters.NewCatalogReaderAdapter(catalogRepo)
-
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
@@ -148,12 +126,12 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		RedisTTL:    24 * time.Hour,
 	})
 
-	callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
+	rt, callLogger, offerSummaryGenerator, replyAgent, err := buildRuntime(cfg, repo, scorer, eventBus, sessionService)
 	if err != nil {
 		return nil, err
 	}
 	if log != nil {
-		log.Info("leads module: agents constructed successfully", "components", "call-logger,gatekeeper,calculator,matchmaker,auditor,offer-summary,whatsapp-reply,email-reply")
+		log.Info("leads module: agents constructed successfully", "components", "runtime,call-logger,offer-summary,whatsapp-reply,email-reply")
 	}
 
 	// SSE service for real-time notifications
@@ -172,12 +150,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	gatekeeperDeduper := newGatekeeperTriggerDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, log)
 	estimatorDeduper := newTriggerFingerprintDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, estimatorTriggerFingerprintPrefix, log)
 	dispatcherDeduper := newTriggerFingerprintDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, dispatcherTriggerFingerprintPrefix, log)
-	orchestrator := NewOrchestrator(OrchestratorAgents{
-		Gatekeeper: gatekeeper,
-		Estimator:  estimator,
-		Dispatcher: dispatcher,
-		Auditor:    auditor,
-	}, repo, outboxRepo, eventBus, sseService, log, runLocker)
+	orchestrator := NewOrchestrator(rt, repo, outboxRepo, eventBus, sseService, log, runLocker)
 	orchestrator.gatekeeperDeduper = gatekeeperDeduper
 	orchestrator.estimatorDeduper = estimatorDeduper
 	orchestrator.dispatcherDeduper = dispatcherDeduper
@@ -190,18 +163,18 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	// Create handlers
 	h := buildHandlers(buildHandlersDeps{
-		MgmtSvc:         mgmtSvc,
-		NotesSvc:        notesSvc,
-		Gatekeeper:      gatekeeper,
-		CallLogger:      callLogger,
-		SSEService:      sseService,
-		EventBus:        eventBus,
-		Repo:            repo,
-		StorageSvc:      storageSvc,
-		Config:          cfg,
-		Validator:       val,
-		CallLogQueue:    nil,
-		GatekeeperQueue: nil,
+		MgmtSvc:        mgmtSvc,
+		NotesSvc:       notesSvc,
+		Runtime:        rt,
+		CallLogger:     callLogger,
+		SSEService:     sseService,
+		EventBus:       eventBus,
+		Repo:           repo,
+		StorageSvc:     storageSvc,
+		Config:         cfg,
+		Validator:      val,
+		CallLogQueue:   nil,
+		AgentTaskQueue: nil,
 	})
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
@@ -219,13 +192,9 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		publicHandler:         publicHandler,
 		management:            mgmtSvc,
 		notes:                 notesSvc,
-		gatekeeper:            gatekeeper,
-		estimator:             estimator,
-		dispatcher:            dispatcher,
-		auditor:               auditor,
+		runtime:               rt,
 		orchestrator:          orchestrator,
 		callLogger:            callLogger,
-		quoteGenerator:        quoteGenerator,
 		offerSummaryGenerator: offerSummaryGenerator,
 		replyAgent:            replyAgent,
 		staleReEngagement:     staleReEngagement,
@@ -257,7 +226,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	subscribeLeadCreated(eventBus, repo, module, log)
 	subscribeLeadServiceAdded(eventBus, repo, module, log)
-	subscribeAttachmentUploaded(eventBus, repo, module, log)
+	subscribeAttachmentUploaded(eventBus, repo, log)
 	if log != nil {
 		log.Info("leads module: event subscriptions registered", "subscriptions", "lead-created,lead-service-added,attachment-uploaded,orchestrator")
 	}
@@ -309,83 +278,45 @@ func (m *Module) VerifyWiring() error {
 	return nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.ReplyAgent, error) {
-	_ = storageSvc
+func buildRuntime(cfg *config.Config, repo repository.LeadsRepository, scorer *scoring.Service, eventBus events.Bus, sessionService session.Service) (*agent.Runtime, *agent.CallLogger, *agent.OfferSummaryGenerator, *agent.ReplyAgent, error) {
 	if err := validateAgentConfiguration(); err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
+
+	rt := agent.NewRuntime(
+		sessionService,
+		resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true),
+		resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, false),
+		resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, false),
+		resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, false),
+		repo,
+		scorer,
+		eventBus,
+	)
+
+	rt.SetEmbeddingClient(buildEmbeddingClient(cfg))
+	rt.SetQdrantClients(
+		buildQdrantClient(cfg),
+		buildScopedQdrantClient(cfg, cfg.GetBouwmaatEmbeddingCollection()),
+		buildScopedQdrantClient(cfg, cfg.GetCatalogEmbeddingCollection()),
+	)
 
 	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	gatekeeper, err := agent.NewGatekeeper(
-		agent.BuildLLM(resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true)),
-		repo, eventBus, scorer, sessionService,
-	)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus, sessionService)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	aiClients := buildAIClients(cfg)
-
-	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
-		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentEstimator, true),
-		Repo:                 repo,
-		EventBus:             eventBus,
-		EmbeddingClient:      aiClients.embeddingClient,
-		QdrantClient:         aiClients.qdrantClient,
-		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
-		CatalogQdrantClient:  aiClients.catalogQdrantClient,
-		CatalogReader:        catalogReader,
-	}, sessionService)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus, sessionService)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
-	}
-
-	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
-		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, true),
-		Repo:                 repo,
-		EventBus:             eventBus,
-		EmbeddingClient:      aiClients.embeddingClient,
-		QdrantClient:         aiClients.qdrantClient,
-		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
-		CatalogQdrantClient:  aiClients.catalogQdrantClient,
-		CatalogReader:        catalogReader,
-	}, sessionService)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false), sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	replyAgent, err := buildReplyAgents(cfg, repo, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, nil
-}
-
-type aiClients struct {
-	embeddingClient      *embeddings.Client
-	qdrantClient         *qdrant.Client
-	catalogQdrantClient  *qdrant.Client
-	bouwmaatQdrantClient *qdrant.Client
+	return rt, callLogger, offerSummaryGenerator, replyAgent, nil
 }
 
 func validateAgentConfiguration() error {
@@ -393,15 +324,6 @@ func validateAgentConfiguration() error {
 		return err
 	}
 	return agent.ValidatePromptTemplates()
-}
-
-func buildAIClients(cfg *config.Config) aiClients {
-	return aiClients{
-		embeddingClient:      buildEmbeddingClient(cfg),
-		qdrantClient:         buildQdrantClient(cfg),
-		catalogQdrantClient:  buildScopedQdrantClient(cfg, cfg.GetCatalogEmbeddingCollection()),
-		bouwmaatQdrantClient: buildScopedQdrantClient(cfg, cfg.GetBouwmaatEmbeddingCollection()),
-	}
 }
 
 // resolveAgentModelConfig builds an openaicompat.Config for the given agent,
@@ -558,7 +480,7 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorEvents(eventBus, orchestrator)
 }
 
-func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
+func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, log *logger.Logger) {
 	eventBus.Subscribe(events.AttachmentUploaded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.AttachmentUploaded)
 		if !ok {
@@ -617,7 +539,7 @@ func createAttachmentFromEvent(ctx context.Context, repo repository.LeadsReposit
 type buildHandlersDeps struct {
 	MgmtSvc         *management.Service
 	NotesSvc        *notes.Service
-	Gatekeeper      *agent.Gatekeeper
+	Runtime         *agent.Runtime
 	CallLogger      *agent.CallLogger
 	SSEService      *sse.Service
 	EventBus        events.Bus
@@ -626,21 +548,21 @@ type buildHandlersDeps struct {
 	Config          *config.Config
 	Validator       *validator.Validator
 	CallLogQueue    scheduler.CallLogScheduler
-	GatekeeperQueue scheduler.GatekeeperScheduler
+	AgentTaskQueue  scheduler.AgentTaskScheduler
 }
 
 func buildHandlers(deps buildHandlersDeps) *handler.Handler {
 	return handler.New(handler.HandlerDeps{
 		Mgmt:              deps.MgmtSvc,
 		NotesSvc:          deps.NotesSvc,
-		Gatekeeper:        deps.Gatekeeper,
+		Runtime:           deps.Runtime,
 		CallLogger:        deps.CallLogger,
 		SSE:               deps.SSEService,
 		EventBus:          deps.EventBus,
 		Repo:              deps.Repo,
 		Validator:         deps.Validator,
 		CallLogQueue:      deps.CallLogQueue,
-		GatekeeperQueue:   deps.GatekeeperQueue,
+		AgentTaskQueue:    deps.AgentTaskQueue,
 		Storage:           deps.StorageSvc,
 		AttachmentsBucket: deps.Config.GetMinioBucketLeadServiceAttachments(),
 	})
@@ -711,7 +633,7 @@ func (m *Module) SetAutomationScheduler(queue AutomationScheduler) {
 	}
 	m.automationQueue = queue
 	if m.handler != nil {
-		m.handler.SetGatekeeperScheduler(queue)
+		m.handler.SetAgentTaskScheduler(queue)
 	}
 	if m.orchestrator != nil {
 		m.orchestrator.SetAutomationScheduler(queue)
@@ -742,7 +664,7 @@ func (m *Module) ProcessLogCallJob(ctx context.Context, leadID, serviceID, userI
 }
 
 func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	if m == nil || m.gatekeeper == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
 
@@ -758,7 +680,12 @@ func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, te
 	}
 	defer m.releaseGatekeeperRun(serviceID)
 
-	if err := m.gatekeeper.Run(ctx, leadID, serviceID, tenantID); err != nil {
+	if err := m.runtime.Run(ctx, agent.AgentTaskPayload{
+		Workspace: "gatekeeper",
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		TenantID:  tenantID,
+	}); err != nil {
 		// Record abort in deduper so the next data-change trigger respects a
 		// cooldown period instead of immediately re-enqueuing.
 		if m.gatekeeperDeduper != nil && strings.Contains(err.Error(), "tool call limit exceeded") {
@@ -795,17 +722,29 @@ func (m *Module) releaseGatekeeperRun(serviceID uuid.UUID) {
 }
 
 func (m *Module) ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
-	if m == nil || m.estimator == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
-	return m.estimator.Execute(ctx, leadID, serviceID, tenantID, force)
+	return m.runtime.Run(ctx, agent.AgentTaskPayload{
+		Workspace: "calculator",
+		Mode:      "estimator",
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		TenantID:  tenantID,
+		Force:     force,
+	})
 }
 
 func (m *Module) ProcessDispatcherRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	if m == nil || m.dispatcher == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
-	err := m.dispatcher.Run(ctx, leadID, serviceID, tenantID)
+	err := m.runtime.Run(ctx, agent.AgentTaskPayload{
+		Workspace: "matchmaker",
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		TenantID:  tenantID,
+	})
 	if err != nil && m.orchestrator != nil {
 		m.orchestrator.recordDispatcherFailure(context.Background(), leadID, serviceID, tenantID)
 	}
@@ -813,17 +752,78 @@ func (m *Module) ProcessDispatcherRun(ctx context.Context, leadID, serviceID, te
 }
 
 func (m *Module) ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error {
-	if m == nil || m.auditor == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
-	return m.auditor.AuditVisitReport(ctx, leadID, serviceID, tenantID, appointmentID)
+	return m.runtime.Run(ctx, agent.AgentTaskPayload{
+		Workspace:     "auditor",
+		LeadID:        leadID,
+		ServiceID:     serviceID,
+		TenantID:      tenantID,
+		AppointmentID: appointmentID,
+	})
 }
 
 func (m *Module) ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	if m == nil || m.auditor == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
-	return m.auditor.AuditCallLog(ctx, leadID, serviceID, tenantID)
+	return m.runtime.Run(ctx, agent.AgentTaskPayload{
+		Workspace: "auditor",
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		TenantID:  tenantID,
+	})
+}
+
+// ProcessAgentTask implements scheduler.LeadAutomationProcessor by routing
+// unified agent tasks to the correct processor based on workspace.
+func (m *Module) ProcessAgentTask(ctx context.Context, payload scheduler.AgentTaskPayload) error {
+	if m == nil {
+		return nil
+	}
+
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		return fmt.Errorf("invalid lead ID: %w", err)
+	}
+	serviceID, err := uuid.Parse(payload.LeadServiceID)
+	if err != nil {
+		return fmt.Errorf("invalid service ID: %w", err)
+	}
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return fmt.Errorf("invalid tenant ID: %w", err)
+	}
+
+	switch payload.Workspace {
+	case "gatekeeper":
+		return m.ProcessGatekeeperRun(ctx, leadID, serviceID, tenantID)
+	case "calculator":
+		if payload.Mode == "quote-generator" {
+			if m.runtime == nil {
+				return nil
+			}
+			_, err := m.runtime.Generate(ctx, leadID, serviceID, tenantID, "", nil, payload.Force)
+			return err
+		}
+		return m.ProcessEstimatorRun(ctx, leadID, serviceID, tenantID, payload.Force)
+	case "matchmaker":
+		return m.ProcessDispatcherRun(ctx, leadID, serviceID, tenantID)
+	case "auditor":
+		if payload.AppointmentID != "" {
+			appointmentID, err := uuid.Parse(payload.AppointmentID)
+			if err != nil {
+				return fmt.Errorf("invalid appointment ID: %w", err)
+			}
+			if appointmentID != uuid.Nil {
+				return m.ProcessAuditVisitReportJob(ctx, leadID, serviceID, tenantID, appointmentID)
+			}
+		}
+		return m.ProcessAuditCallLogJob(ctx, leadID, serviceID, tenantID)
+	default:
+		return fmt.Errorf("unsupported agent workspace: %s", payload.Workspace)
+	}
 }
 
 // SetPublicViewers injects quote and appointment viewers for the public portal.
@@ -868,38 +868,47 @@ func (m *Module) SetLeadScorer(scorer *scoring.Service) {
 	m.scorer = scorer
 }
 
-// SetCatalogReader sets the catalog reader on the Estimator agent.
+// SetCatalogReader sets the catalog reader on the Runtime.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetCatalogReader(cr ports.CatalogReader) {
-	m.estimator.SetCatalogReader(cr)
-	m.quoteGenerator.SetCatalogReader(cr)
+	if m == nil || m.runtime == nil {
+		return
+	}
+	m.runtime.SetCatalogReader(cr)
 }
 
-// SetQuoteDrafter sets the quote drafter on the Estimator agent.
+// SetQuoteDrafter sets the quote drafter on the Runtime.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
-	m.estimator.SetQuoteDrafter(qd)
-	m.quoteGenerator.SetQuoteDrafter(qd)
+	if m == nil || m.runtime == nil {
+		return
+	}
+	m.runtime.SetQuoteDrafter(qd)
 }
 
-// SetPricingIntelligenceReader injects read-only quote pricing intelligence into estimator agents.
+// SetPricingIntelligenceReader injects read-only quote pricing intelligence into the Runtime.
 func (m *Module) SetPricingIntelligenceReader(reader ports.PricingIntelligenceReader) {
-	m.estimator.SetPricingIntelligenceReader(reader)
-	m.quoteGenerator.SetPricingIntelligenceReader(reader)
+	if m == nil || m.runtime == nil {
+		return
+	}
+	m.runtime.SetPricingIntelligenceReader(reader)
 }
 
-// SetPartnerOfferCreator sets the partner offer creator on the Dispatcher agent.
+// SetPartnerOfferCreator sets the partner offer creator on the Runtime.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetPartnerOfferCreator(poc ports.PartnerOfferCreator) {
-	m.dispatcher.SetOfferCreator(poc)
+	if m == nil || m.runtime == nil {
+		return
+	}
+	m.runtime.SetOfferCreator(poc)
 }
 
 // QuoteGeneratorAgent exposes the prompt-driven quote generator through its narrow interface.
 func (m *Module) QuoteGeneratorAgent() agent.QuoteGenerator {
-	if m == nil {
+	if m == nil || m.runtime == nil {
 		return nil
 	}
-	return m.quoteGenerator
+	return m.runtime
 }
 
 // RegisterRoutes mounts RAC_leads routes on the provided router context.

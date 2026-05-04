@@ -11,47 +11,33 @@ import (
 	apptools "portal_final_backend/internal/tools"
 )
 
-// ToolDependencies contains the dependencies needed by tools
-
-// applyRBACToolsets wraps the toolsets with an RBAC predicate based on the request's ToolDependencies.
-func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+// withDeps wraps a handler that needs ToolDependencies so the wrapper
+// automatically resolves dependencies from the tool context.
+func withDeps[In any, Out any](fn func(tool.Context, *ToolDependencies, In) (Out, error)) func(tool.Context, In) (Out, error) {
+	return func(ctx tool.Context, input In) (Out, error) {
 		deps, err := GetDependencies(ctx)
 		if err != nil {
-			return UpdatePipelineStageOutput{}, err
+			var zero Out
+			return zero, err
 		}
-		return handleUpdatePipelineStage(ctx, deps, input)
-	})
+		return fn(ctx, deps, input)
+	}
+}
+
+func createUpdatePipelineStageTool() (tool.Tool, error) {
+	return apptools.NewUpdatePipelineStageTool(withDeps(handleUpdatePipelineStage))
 }
 
 func createSaveAnalysisTool() (tool.Tool, error) {
-	return apptools.NewSaveAnalysisTool(func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return SaveAnalysisOutput{}, err
-		}
-		return handleSaveAnalysis(ctx, deps, input)
-	})
+	return apptools.NewSaveAnalysisTool(withDeps(handleSaveAnalysis))
 }
 
 func createUpdateLeadServiceTypeTool() (tool.Tool, error) {
-	return apptools.NewUpdateLeadServiceTypeTool(func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return UpdateLeadServiceTypeOutput{}, err
-		}
-		return handleUpdateLeadServiceType(ctx, deps, input)
-	})
+	return apptools.NewUpdateLeadServiceTypeTool(withDeps(handleUpdateLeadServiceType))
 }
 
 func createUpdateLeadDetailsTool(description string) (tool.Tool, error) {
-	return apptools.NewUpdateLeadDetailsTool(description, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return UpdateLeadDetailsOutput{}, err
-		}
-		return handleUpdateLeadDetails(ctx, deps, input)
-	})
+	return apptools.NewUpdateLeadDetailsTool(description, withDeps(handleUpdateLeadDetails))
 }
 
 func latestAnalysisInvariantInputs(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, []string) {

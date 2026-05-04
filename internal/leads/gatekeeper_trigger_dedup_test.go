@@ -18,15 +18,15 @@ const testGatekeeperConsumerPhone = "+31612345678"
 const testGatekeeperLeadCreatedSource = "lead created"
 
 type queueUniqueGatekeeperScheduler struct {
-	gatekeeperPayloads []scheduler.GatekeeperRunPayload
-	seenPayloads       map[string]struct{}
+	agentTaskPayloads []scheduler.AgentTaskPayload
+	seenPayloads      map[string]struct{}
 }
 
-func (q *queueUniqueGatekeeperScheduler) EnqueueGatekeeperRun(_ context.Context, payload scheduler.GatekeeperRunPayload) error {
+func (q *queueUniqueGatekeeperScheduler) EnqueueAgentTask(_ context.Context, payload scheduler.AgentTaskPayload) error {
 	if q.seenPayloads == nil {
 		q.seenPayloads = make(map[string]struct{})
 	}
-	task, err := scheduler.NewGatekeeperRunTask(payload)
+	task, err := scheduler.NewAgentTask(payload)
 	if err != nil {
 		return err
 	}
@@ -35,24 +35,26 @@ func (q *queueUniqueGatekeeperScheduler) EnqueueGatekeeperRun(_ context.Context,
 		return scheduler.ErrDuplicateTask
 	}
 	q.seenPayloads[key] = struct{}{}
-	q.gatekeeperPayloads = append(q.gatekeeperPayloads, payload)
+	q.agentTaskPayloads = append(q.agentTaskPayloads, payload)
 	return nil
 }
 
-func (q *queueUniqueGatekeeperScheduler) EnqueueEstimatorRun(context.Context, scheduler.EstimatorRunPayload) error {
+func (q *queueUniqueGatekeeperScheduler) EnqueueLogCall(context.Context, scheduler.LogCallPayload) error {
 	return nil
 }
 
-func (q *queueUniqueGatekeeperScheduler) EnqueueDispatcherRun(context.Context, scheduler.DispatcherRunPayload) error {
+func (q *queueUniqueGatekeeperScheduler) EnqueueStaleLeadReEngage(context.Context, scheduler.StaleLeadReEngagePayload) error {
 	return nil
 }
 
-func (q *queueUniqueGatekeeperScheduler) EnqueueAuditVisitReport(context.Context, scheduler.AuditVisitReportPayload) error {
-	return nil
-}
-
-func (q *queueUniqueGatekeeperScheduler) EnqueueAuditCallLog(context.Context, scheduler.AuditCallLogPayload) error {
-	return nil
+func (q *queueUniqueGatekeeperScheduler) gatekeeperPayloads() []scheduler.AgentTaskPayload {
+	var out []scheduler.AgentTaskPayload
+	for _, p := range q.agentTaskPayloads {
+		if p.Workspace == "gatekeeper" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 type gatekeeperFingerprintRepoStub struct {
@@ -117,10 +119,10 @@ func TestMaybeEnqueueGatekeeperRunSkipsUnchangedFingerprintAfterStageOnlyChange(
 	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: testGatekeeperLeadCreatedSource}) {
 		t.Fatalf("expected enqueue helper to handle trigger")
 	}
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected first gatekeeper enqueue, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected first gatekeeper enqueue, got %d", len(queue.gatekeeperPayloads()))
 	}
-	if queue.gatekeeperPayloads[0].Fingerprint == "" {
+	if queue.gatekeeperPayloads()[0].Fingerprint == "" {
 		t.Fatalf("expected payload fingerprint to be populated")
 	}
 
@@ -128,8 +130,8 @@ func TestMaybeEnqueueGatekeeperRunSkipsUnchangedFingerprintAfterStageOnlyChange(
 	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "user_update"}) {
 		t.Fatalf("expected enqueue helper to handle duplicate trigger")
 	}
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected unchanged stage-only rerun to be skipped, got %d enqueues", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected unchanged stage-only rerun to be skipped, got %d enqueues", len(queue.gatekeeperPayloads()))
 	}
 }
 
@@ -165,10 +167,10 @@ func TestMaybeEnqueueGatekeeperRunAllowsMaterialChange(t *testing.T) {
 	repo.notes = []repository.LeadNote{{ID: uuid.New(), LeadID: leadID, OrganizationID: tenantID, Type: "note", Body: "Klant stuurde extra details"}}
 	maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "note"})
 
-	if len(queue.gatekeeperPayloads) != 2 {
-		t.Fatalf("expected material note change to enqueue a second run, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 2 {
+		t.Fatalf("expected material note change to enqueue a second run, got %d", len(queue.gatekeeperPayloads()))
 	}
-	if queue.gatekeeperPayloads[0].Fingerprint == queue.gatekeeperPayloads[1].Fingerprint {
+	if queue.gatekeeperPayloads()[0].Fingerprint == queue.gatekeeperPayloads()[1].Fingerprint {
 		t.Fatalf("expected fingerprints to differ after material change")
 	}
 }
@@ -209,8 +211,8 @@ func TestMaybeEnqueueGatekeeperRunBurstCollapsesAtQueueLayerAcrossFingerprints(t
 		t.Fatalf("expected follow-up intake trigger to be handled")
 	}
 
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected queue-level gatekeeper uniqueness to collapse the burst to one entry, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected queue-level gatekeeper uniqueness to collapse the burst to one entry, got %d", len(queue.gatekeeperPayloads()))
 	}
 }
 

@@ -33,14 +33,14 @@ import (
 type Handler struct {
 	mgmt            *management.Service
 	notesSvc        *notes.Service
-	gatekeeper      *agent.Gatekeeper
+	runtime         *agent.Runtime
 	callLogger      *agent.CallLogger
 	sse             *sse.Service
 	eventBus        events.Bus
 	repo            repository.LeadsRepository
 	val             *validator.Validator
 	callLogQueue    scheduler.CallLogScheduler
-	gatekeeperQueue scheduler.GatekeeperScheduler
+	agentTaskQueue  scheduler.AgentTaskScheduler
 	staleDetector   *maintenance.StaleLeadDetector
 	staleSuggester  *maintenance.StaleLeadReEngagementService
 	storage         storage.StorageService
@@ -51,14 +51,14 @@ type Handler struct {
 type HandlerDeps struct {
 	Mgmt              *management.Service
 	NotesSvc          *notes.Service
-	Gatekeeper        *agent.Gatekeeper
+	Runtime           *agent.Runtime
 	CallLogger        *agent.CallLogger
 	SSE               *sse.Service
 	EventBus          events.Bus
 	Repo              repository.LeadsRepository
 	Validator         *validator.Validator
 	CallLogQueue      scheduler.CallLogScheduler
-	GatekeeperQueue   scheduler.GatekeeperScheduler
+	AgentTaskQueue    scheduler.AgentTaskScheduler
 	Storage           storage.StorageService
 	AttachmentsBucket string
 }
@@ -76,14 +76,14 @@ func New(deps HandlerDeps) *Handler {
 	return &Handler{
 		mgmt:              deps.Mgmt,
 		notesSvc:          deps.NotesSvc,
-		gatekeeper:        deps.Gatekeeper,
+		runtime:           deps.Runtime,
 		callLogger:        deps.CallLogger,
 		sse:               deps.SSE,
 		eventBus:          deps.EventBus,
 		repo:              deps.Repo,
 		val:               deps.Validator,
 		callLogQueue:      deps.CallLogQueue,
-		gatekeeperQueue:   deps.GatekeeperQueue,
+		agentTaskQueue:    deps.AgentTaskQueue,
 		storage:           deps.Storage,
 		attachmentsBucket: deps.AttachmentsBucket,
 	}
@@ -93,8 +93,8 @@ func (h *Handler) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
 	h.callLogQueue = queue
 }
 
-func (h *Handler) SetGatekeeperScheduler(queue scheduler.GatekeeperScheduler) {
-	h.gatekeeperQueue = queue
+func (h *Handler) SetAgentTaskScheduler(queue scheduler.AgentTaskScheduler) {
+	h.agentTaskQueue = queue
 }
 
 func (h *Handler) SetStaleLeadDetector(d *maintenance.StaleLeadDetector) {
@@ -1019,7 +1019,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	}
 
 	// Trigger gatekeeper analysis asynchronously
-	if h.gatekeeperQueue != nil {
+	if h.agentTaskQueue != nil {
 		h.enqueueGatekeeperAnalysis(c, id, tenantID, validation.ServiceID)
 		return
 	}
@@ -1027,7 +1027,12 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	go func() {
 		ctx := agent.WithUserRoles(context.Background(), identity.Roles())
 		serviceID := validation.ServiceID
-		if err := h.gatekeeper.Run(ctx, id, *serviceID, tenantID); err != nil {
+		if err := h.runtime.Run(ctx, agent.AgentTaskPayload{
+			Workspace: "gatekeeper",
+			LeadID:    id,
+			ServiceID: *serviceID,
+			TenantID:  tenantID,
+		}); err != nil {
 			_ = err // log-only: don't expose to client
 		}
 	}()
@@ -1060,7 +1065,8 @@ func (h *Handler) enqueueGatekeeperAnalysis(c *gin.Context, id, tenantID uuid.UU
 		ProgressPercent: 5,
 		Message:         &message,
 	})
-	if err := h.gatekeeperQueue.EnqueueGatekeeperRun(c.Request.Context(), scheduler.GatekeeperRunPayload{
+	if err := h.agentTaskQueue.EnqueueAgentTask(c.Request.Context(), scheduler.AgentTaskPayload{
+		Workspace:     "gatekeeper",
 		TenantID:      tenantID.String(),
 		LeadID:        id.String(),
 		LeadServiceID: queuedServiceID.String(),

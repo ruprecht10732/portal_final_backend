@@ -15,6 +15,15 @@ This repository uses a convention-based file workspace model for backend agents.
 - `internal/tools/`: central tool catalog and the shared boundary for system and domain tool naming.
 - `internal/leads/agent/`: lead-domain agent runtimes, prompt assembly, and domain-specific tool implementations.
 
+## Unified Agent Runtime (v2.0)
+
+`internal/leads/agent/` is anchored by a single `Runtime` struct that dynamically constructs workspace-specific agents on demand. This eliminates the need for the `leads.Module` to hold separate fields for each agent.
+
+- `Runtime` receives an `AgentTaskPayload` specifying the target `Workspace` (`gatekeeper`, `calculator`, `matchmaker`, `auditor`) and optional `Mode`.
+- Shared dependencies (repository, event bus, model configs, session service, catalog reader, quote drafter, partner offer creator) are injected once at module initialization.
+- The scheduler consumes a single `AgentTaskScheduler` interface (`EnqueueAgentTask`) and dispatches the unified `agent:run` task type.
+- `leads.Module` implements `scheduler.LeadAutomationProcessor.ProcessAgentTask` to bridge scheduler tasks back into `Runtime.Run`.
+
 ## Layout
 
 - `AGENTS.md`: repository root identity.

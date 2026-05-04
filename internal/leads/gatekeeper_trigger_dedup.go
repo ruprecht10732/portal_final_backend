@@ -130,7 +130,7 @@ type gatekeeperEnqueueRequest struct {
 	ctx       context.Context
 	repo      gatekeeperTriggerFingerprintRepo
 	deduper   gatekeeperTriggerDeduper
-	queue     scheduler.GatekeeperScheduler
+	queue     scheduler.AgentTaskScheduler
 	log       *logger.Logger
 	leadID    uuid.UUID
 	serviceID uuid.UUID
@@ -344,7 +344,8 @@ func (r gatekeeperEnqueueRequest) shouldSkipDuplicateFingerprint(fingerprint str
 }
 
 func (r gatekeeperEnqueueRequest) enqueue(fingerprint string) {
-	if err := r.queue.EnqueueGatekeeperRun(r.ctx, scheduler.GatekeeperRunPayload{
+	if err := r.queue.EnqueueAgentTask(r.ctx, scheduler.AgentTaskPayload{
+		Workspace:     "gatekeeper",
 		TenantID:      r.tenantID.String(),
 		LeadID:        r.leadID.String(),
 		LeadServiceID: r.serviceID.String(),

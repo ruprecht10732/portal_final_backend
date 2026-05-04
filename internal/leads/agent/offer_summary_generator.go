@@ -7,12 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 
 	"portal_final_backend/internal/leads/ports"
-	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/openaicompat"
 )
 
@@ -26,34 +24,23 @@ type OfferSummaryGenerator struct {
 
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
 func NewOfferSummaryGenerator(modelCfg openaicompat.Config, sessionService session.Service) (*OfferSummaryGenerator, error) {
-	kimi := openaicompat.NewModel(modelCfg)
-	workspace, err := orchestration.LoadAgentWorkspace("offer-summary")
+	llm := openaicompat.NewModel(modelCfg)
+	kit, err := BuildAgentKit(
+		"OfferSummaryGenerator",
+		"Generates concise, readable summaries for partner offers.",
+		"offer-summary",
+		"offer-summary-generator",
+		llm,
+		sessionService,
+		nil,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load offer summary workspace context: %w", err)
-	}
-
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "OfferSummaryGenerator",
-		Model:       kimi,
-		Description: "Generates concise, readable summaries for partner offers.",
-		Instruction: workspace.Instruction,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create offer summary agent: %w", err)
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        "offer-summary-generator",
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create offer summary runner: %w", err)
+		return nil, err
 	}
 
 	return &OfferSummaryGenerator{
-		agent:          adkAgent,
-		runner:         r,
+		agent:          kit.Agent,
+		runner:         kit.Runner,
 		sessionService: sessionService,
 		appName:        "offer-summary-generator",
 	}, nil

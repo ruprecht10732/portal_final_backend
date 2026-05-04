@@ -60,10 +60,10 @@ type toolContextWrapper struct {
 	ctx context.Context
 }
 
-func (w toolContextWrapper) Value(key any) any { return w.ctx.Value(key) }
+func (w toolContextWrapper) Value(key any) any           { return w.ctx.Value(key) }
 func (w toolContextWrapper) Deadline() (time.Time, bool) { return w.ctx.Deadline() }
-func (w toolContextWrapper) Done() <-chan struct{} { return w.ctx.Done() }
-func (w toolContextWrapper) Err() error { return w.ctx.Err() }
+func (w toolContextWrapper) Done() <-chan struct{}       { return w.ctx.Done() }
+func (w toolContextWrapper) Err() error                  { return w.ctx.Err() }
 
 // WrapHandler wraps a tool handler function with automatic retry and structured
 // error reflection. On failure, it serializes the error, feeds it back as
@@ -73,7 +73,7 @@ func WrapHandler[In any, Out any](base func(tool.Context, In) (Out, error), poli
 		var zero Out
 		var lastErr error
 		delay := policy.BaseDelay
-		var wrappedCtx tool.Context = ctx
+		var wrappedCtx = ctx
 
 		for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 			result, err := base(wrappedCtx, input)

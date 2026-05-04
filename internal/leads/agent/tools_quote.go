@@ -165,14 +165,8 @@ func nilIfEmptyString(value string) *string {
 	return &trimmed
 }
 
-func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewSubmitQuoteCritiqueTool(func(ctx tool.Context, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return SubmitQuoteCritiqueOutput{}, err
-		}
-		return handleSubmitQuoteCritique(ctx, deps, input)
-	})
+func createSubmitQuoteCritiqueTool() (tool.Tool, error) {
+	return apptools.NewSubmitQuoteCritiqueTool(withDeps(handleSubmitQuoteCritique))
 }
 
 func handleSubmitQuoteCritique(ctx tool.Context, deps *ToolDependencies, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
@@ -554,14 +548,8 @@ func collectCatalogAssetsForDraft(ctx context.Context, deps *ToolDependencies, t
 	return collectCatalogAssets(details)
 }
 
-func createDraftQuoteTool(_ *ToolDependencies) (tool.Tool, error) {
-	return apptools.NewDraftQuoteTool(func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
-		deps, err := GetDependencies(ctx)
-		if err != nil {
-			return DraftQuoteOutput{}, err
-		}
-		return handleDraftQuote(ctx, deps, input)
-	})
+func createDraftQuoteTool() (tool.Tool, error) {
+	return apptools.NewDraftQuoteTool(withDeps(handleDraftQuote))
 }
 
 // collectCatalogProductIDs extracts unique, non-nil catalog product UUIDs from draft items.

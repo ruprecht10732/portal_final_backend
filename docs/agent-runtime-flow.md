@@ -9,7 +9,7 @@ This page describes the actual backend agent chain as implemented today.
 - `LeadCreated`
 - `LeadServiceAdded`
 
-These events try to start an initial Gatekeeper run.
+These events try to start an initial Gatekeeper run via the unified `AgentTaskScheduler`.
 
 ### Attachment Uploads
 
@@ -29,6 +29,19 @@ This can re-trigger Gatekeeper and, for call-log sourced updates, can also enque
 
 This can enqueue Auditor review.
 
+## Unified Agent Runtime (v2.0)
+
+All primary agent workspaces are executed through a single `agent.Runtime` instance:
+
+- `Runtime` holds shared dependencies (repository, event bus, model configs, session service) and constructs the appropriate workspace agent on demand.
+- A unified `AgentTaskPayload` routes tasks to the correct workspace:
+  - `gatekeeper` — intake validation
+  - `calculator` — estimation (`mode=estimator`) or quote generation (`mode=quote-generator`)
+  - `matchmaker` — partner matching and offer creation
+  - `auditor` — call-log or visit-report auditing (uses `AppointmentID` when set)
+- The scheduler exposes one `AgentTaskScheduler` interface (`EnqueueAgentTask`). Legacy scheduler interfaces are deprecated and mapped to the unified queue.
+- `leads.Module` implements `LeadAutomationProcessor.ProcessAgentTask`, parsing the unified payload and delegating to the correct synchronous runtime method.
+
 ## Primary Runtime Chain
 
 1. Gatekeeper validates intake completeness.
@@ -46,6 +59,7 @@ If a new service already has image attachments, initial Gatekeeper evaluation ca
 - Gatekeeper, Estimator, and Dispatcher use short-window dedupe guards.
 - Terminal services do not trigger agents.
 - Manual intervention suppresses further autonomous Gatekeeper progression.
+- The scheduler applies workspace-specific uniqueness TTLs (e.g., 45s for gatekeeper, estimator timeout for calculator) while sharing the single `agent:run` task type.
 
 ## Related References
 

@@ -9,13 +9,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/openaicompat"
 )
 
@@ -108,31 +106,20 @@ func (a *StaleReEngagementAgent) GenerateSuggestion(
 }
 
 func (a *StaleReEngagementAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
-	kimi := openaicompat.NewModel(a.modelConfig)
-	instruction, err := orchestration.BuildAgentInstruction(staleReEngagementAppName, staleReEngagementSystemPrompt(toneOfVoice))
+	builder, err := NewLazyRunnerBuilder(
+		"StaleReEngagementAgent",
+		"Generates a re-engagement recommendation and draft message for a stale lead service.",
+		staleReEngagementAppName,
+		a.appName,
+		a.modelConfig,
+		a.sessionService,
+		staleReEngagementSystemPrompt(toneOfVoice),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("stale reengagement: load workspace: %w", err)
 	}
 
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "StaleReEngagementAgent",
-		Model:       kimi,
-		Description: "Generates a re-engagement recommendation and draft message for a stale lead service.",
-		Instruction: instruction,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        a.appName,
-		SessionService: a.sessionService,
-		Agent:          adkAgent,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("stale reengagement: create runner: %w", err)
-	}
-	return r, nil
+	return builder.Runner()
 }
 
 func (a *StaleReEngagementAgent) loadSettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {

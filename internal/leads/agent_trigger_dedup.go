@@ -131,7 +131,7 @@ type estimatorEnqueueRequest struct {
 	ctx       context.Context
 	repo      estimatorTriggerFingerprintRepo
 	deduper   triggerFingerprintDeduper
-	queue     scheduler.EstimatorScheduler
+	queue     scheduler.AgentTaskScheduler
 	log       *logger.Logger
 	leadID    uuid.UUID
 	serviceID uuid.UUID
@@ -144,7 +144,7 @@ type dispatcherEnqueueRequest struct {
 	ctx       context.Context
 	repo      dispatcherTriggerFingerprintRepo
 	deduper   triggerFingerprintDeduper
-	queue     scheduler.DispatcherScheduler
+	queue     scheduler.AgentTaskScheduler
 	log       *logger.Logger
 	leadID    uuid.UUID
 	serviceID uuid.UUID
@@ -358,7 +358,9 @@ func (r estimatorEnqueueRequest) shouldSkipDuplicateFingerprint(fingerprint stri
 }
 
 func (r estimatorEnqueueRequest) enqueue(fingerprint string) {
-	if err := r.queue.EnqueueEstimatorRun(r.ctx, scheduler.EstimatorRunPayload{
+	if err := r.queue.EnqueueAgentTask(r.ctx, scheduler.AgentTaskPayload{
+		Workspace:     "calculator",
+		Mode:          "estimator",
 		TenantID:      r.tenantID.String(),
 		LeadID:        r.leadID.String(),
 		LeadServiceID: r.serviceID.String(),
@@ -404,7 +406,8 @@ func (r dispatcherEnqueueRequest) shouldSkipDuplicateFingerprint(fingerprint str
 }
 
 func (r dispatcherEnqueueRequest) enqueue(fingerprint string) {
-	if err := r.queue.EnqueueDispatcherRun(r.ctx, scheduler.DispatcherRunPayload{
+	if err := r.queue.EnqueueAgentTask(r.ctx, scheduler.AgentTaskPayload{
+		Workspace:     "matchmaker",
 		TenantID:      r.tenantID.String(),
 		LeadID:        r.leadID.String(),
 		LeadServiceID: r.serviceID.String(),

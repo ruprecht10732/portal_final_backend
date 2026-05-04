@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -18,7 +17,6 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/openaicompat"
 )
@@ -139,13 +137,7 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 	return SubmitAuditResultOutput{Status: "ok", Message: "audit stored"}, nil
 }
 
-func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Auditor, error) {
-	kimi := openaicompat.NewModel(modelCfg)
-	workspace, err := orchestration.LoadAgentWorkspace("auditor")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load auditor workspace context: %w", err)
-	}
-
+func newAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Auditor, error) {
 	deps := &AuditorToolDeps{Repo: repo, EventBus: eventBus}
 
 	submitTool, err := apptools.NewSubmitAuditResultTool(func(ctx tool.Context, input SubmitAuditResultInput) (SubmitAuditResultOutput, error) {
@@ -158,32 +150,24 @@ func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SubmitAuditResult tool: %w", err)
 	}
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "auditor_tools", []tool.Tool{submitTool})
-	toolsets = applyRBACToolsets(toolsets)
 
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "AuditAgent",
-		Model:       kimi,
-		Description: "Internal reviewer that validates VisitReports and CallLogs against intake guidelines.",
-		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
-	})
+	llm := openaicompat.NewModel(modelCfg)
+	kit, err := BuildAgentKit(
+		"AuditAgent",
+		"Internal reviewer that validates VisitReports and CallLogs against intake guidelines.",
+		"auditor",
+		"auditor",
+		llm,
+		sessionService,
+		[]tool.Tool{submitTool},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create audit agent: %w", err)
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        "auditor",
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create auditor runner: %w", err)
+		return nil, err
 	}
 
 	return &Auditor{
-		agent:          adkAgent,
-		runner:         r,
+		agent:          kit.Agent,
+		runner:         kit.Runner,
 		sessionService: sessionService,
 		appName:        "auditor",
 		repo:           repo,

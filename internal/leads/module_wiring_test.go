@@ -35,19 +35,13 @@ func (testLeadUpdater) Update(context.Context, uuid.UUID, transport.UpdateLeadRe
 
 type testAutomationScheduler struct{}
 
-func (testAutomationScheduler) EnqueueGatekeeperRun(context.Context, scheduler.GatekeeperRunPayload) error {
+func (testAutomationScheduler) EnqueueAgentTask(context.Context, scheduler.AgentTaskPayload) error {
 	return nil
 }
-func (testAutomationScheduler) EnqueueEstimatorRun(context.Context, scheduler.EstimatorRunPayload) error {
+func (testAutomationScheduler) EnqueueLogCall(context.Context, scheduler.LogCallPayload) error {
 	return nil
 }
-func (testAutomationScheduler) EnqueueDispatcherRun(context.Context, scheduler.DispatcherRunPayload) error {
-	return nil
-}
-func (testAutomationScheduler) EnqueueAuditVisitReport(context.Context, scheduler.AuditVisitReportPayload) error {
-	return nil
-}
-func (testAutomationScheduler) EnqueueAuditCallLog(context.Context, scheduler.AuditCallLogPayload) error {
+func (testAutomationScheduler) EnqueueStaleLeadReEngage(context.Context, scheduler.StaleLeadReEngagePayload) error {
 	return nil
 }
 

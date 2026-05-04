@@ -28,6 +28,51 @@ const TaskIMAPSyncSweep = "imap.sync.sweep"
 const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
 const TaskStaleLeadNotify = "leads.stale.notify"
 const TaskStaleLeadReEngage = "leads.stale.reengage"
+const TaskAgentRun = "agent:run"
+
+// AgentTaskPayload is the unified payload for all agent runs.
+type AgentTaskPayload struct {
+	Workspace     string `json:"workspace"`
+	Mode          string `json:"mode,omitempty"`
+	TenantID      string `json:"tenantId"`
+	LeadID        string `json:"leadId"`
+	LeadServiceID string `json:"leadServiceId"`
+	Force         bool   `json:"force,omitempty"`
+	AppointmentID string `json:"appointmentId,omitempty"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
+}
+
+func NewAgentTask(payload AgentTaskPayload) (*asynq.Task, error) {
+	// Gatekeeper uses a stripped payload (no fingerprint) for queue-level
+	// uniqueness so short bursts per service collapse even when multiple
+	// trigger sources produce different snapshots.
+	if payload.Workspace == "gatekeeper" {
+		stripped := AgentTaskPayload{
+			Workspace:     payload.Workspace,
+			TenantID:      payload.TenantID,
+			LeadID:        payload.LeadID,
+			LeadServiceID: payload.LeadServiceID,
+		}
+		data, err := json.Marshal(stripped)
+		if err != nil {
+			return nil, err
+		}
+		return asynq.NewTask(TaskAgentRun, data), nil
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskAgentRun, data), nil
+}
+
+func ParseAgentTaskPayload(task *asynq.Task) (AgentTaskPayload, error) {
+	var payload AgentTaskPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return AgentTaskPayload{}, err
+	}
+	return payload, nil
+}
 
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
@@ -98,47 +143,6 @@ type PartnerOfferSummaryPayload struct {
 type PartnerOfferPDFPayload struct {
 	OfferID  string `json:"offerId"`
 	TenantID string `json:"tenantId"`
-}
-
-type GatekeeperRunPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-}
-
-type gatekeeperRunTaskPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
-}
-
-type EstimatorRunPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
-	Force         bool   `json:"force,omitempty"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-}
-
-type DispatcherRunPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-}
-
-type AuditVisitReportPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
-	AppointmentID string `json:"appointmentId"`
-}
-
-type AuditCallLogPayload struct {
-	TenantID      string `json:"tenantId"`
-	LeadID        string `json:"leadId"`
-	LeadServiceID string `json:"leadServiceId"`
 }
 
 type WAAgentVoiceTranscriptionPayload struct {
@@ -331,93 +335,6 @@ func ParsePartnerOfferPDFPayload(task *asynq.Task) (PartnerOfferPDFPayload, erro
 	var payload PartnerOfferPDFPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return PartnerOfferPDFPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewGatekeeperRunTask(payload GatekeeperRunPayload) (*asynq.Task, error) {
-	// Exclude the semantic fingerprint from the queued task body so queue-level
-	// uniqueness collapses short bursts per service, even when multiple trigger
-	// sources produce slightly different snapshots during intake.
-	data, err := json.Marshal(gatekeeperRunTaskPayload{
-		TenantID:      payload.TenantID,
-		LeadID:        payload.LeadID,
-		LeadServiceID: payload.LeadServiceID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskRunGatekeeper, data), nil
-}
-
-func ParseGatekeeperRunPayload(task *asynq.Task) (GatekeeperRunPayload, error) {
-	var payload GatekeeperRunPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return GatekeeperRunPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewEstimatorRunTask(payload EstimatorRunPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskRunEstimator, data), nil
-}
-
-func ParseEstimatorRunPayload(task *asynq.Task) (EstimatorRunPayload, error) {
-	var payload EstimatorRunPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return EstimatorRunPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewDispatcherRunTask(payload DispatcherRunPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskRunDispatcher, data), nil
-}
-
-func ParseDispatcherRunPayload(task *asynq.Task) (DispatcherRunPayload, error) {
-	var payload DispatcherRunPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return DispatcherRunPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewAuditVisitReportTask(payload AuditVisitReportPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskAuditVisitReport, data), nil
-}
-
-func ParseAuditVisitReportPayload(task *asynq.Task) (AuditVisitReportPayload, error) {
-	var payload AuditVisitReportPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return AuditVisitReportPayload{}, err
-	}
-	return payload, nil
-}
-
-func NewAuditCallLogTask(payload AuditCallLogPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return asynq.NewTask(TaskAuditCallLog, data), nil
-}
-
-func ParseAuditCallLogPayload(task *asynq.Task) (AuditCallLogPayload, error) {
-	var payload AuditCallLogPayload
-	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-		return AuditCallLogPayload{}, err
 	}
 	return payload, nil
 }

@@ -77,21 +77,8 @@ type PartnerOfferPDFScheduler interface {
 	EnqueuePartnerOfferPDF(ctx context.Context, payload PartnerOfferPDFPayload) error
 }
 
-type GatekeeperScheduler interface {
-	EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error
-}
-
-type EstimatorScheduler interface {
-	EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPayload) error
-}
-
-type DispatcherScheduler interface {
-	EnqueueDispatcherRun(ctx context.Context, payload DispatcherRunPayload) error
-}
-
-type AuditorScheduler interface {
-	EnqueueAuditVisitReport(ctx context.Context, payload AuditVisitReportPayload) error
-	EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPayload) error
+type AgentTaskScheduler interface {
+	EnqueueAgentTask(ctx context.Context, payload AgentTaskPayload) error
 }
 
 type WAAgentVoiceTranscriptionScheduler interface {
@@ -281,75 +268,35 @@ func (c *Client) EnqueuePartnerOfferPDF(ctx context.Context, payload PartnerOffe
 // for this specifically when they need to distinguish "already queued" from other errors.
 var ErrDuplicateTask = asynq.ErrDuplicateTask
 
-func (c *Client) EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error {
+func (c *Client) EnqueueAgentTask(ctx context.Context, payload AgentTaskPayload) error {
 	if c == nil || c.client == nil {
 		return nil
 	}
 
-	task, err := NewGatekeeperRunTask(payload)
+	task, err := NewAgentTask(payload)
 	if err != nil {
 		return err
 	}
 
-	_, err = c.client.EnqueueContext(ctx, task, gatekeeperTaskOptions(c.queue)...)
-	// Intentionally NOT using normalizeEnqueueError here so that callers can
+	var opts []asynq.Option
+	opts = append(opts, asynq.Queue(c.queue))
+	opts = append(opts, asynq.Timeout(leadAutomationTaskTimeout))
+	opts = append(opts, asynq.MaxRetry(leadAutomationTaskMaxRetry))
+	switch payload.Workspace {
+	case "gatekeeper":
+		opts = append(opts, asynq.Unique(gatekeeperTaskUniqueTTL))
+	case "calculator":
+		opts = append(opts, asynq.Unique(estimatorTaskUniqueTTL))
+	default:
+		opts = append(opts, asynq.Unique(leadAutomationTaskUniqueTTL))
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, opts...)
+	// For gatekeeper, preserve old behavior: don't normalize so callers can
 	// distinguish duplicate tasks from successful enqueues.
-	return err
-}
-
-func (c *Client) EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPayload) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-
-	task, err := NewEstimatorRunTask(payload)
-	if err != nil {
+	if payload.Workspace == "gatekeeper" {
 		return err
 	}
-
-	_, err = c.client.EnqueueContext(ctx, task, estimatorTaskOptions(c.queue)...)
-	return normalizeEnqueueError(err)
-}
-
-func (c *Client) EnqueueDispatcherRun(ctx context.Context, payload DispatcherRunPayload) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-
-	task, err := NewDispatcherRunTask(payload)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
-	return normalizeEnqueueError(err)
-}
-
-func (c *Client) EnqueueAuditVisitReport(ctx context.Context, payload AuditVisitReportPayload) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-
-	task, err := NewAuditVisitReportTask(payload)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
-	return normalizeEnqueueError(err)
-}
-
-func (c *Client) EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPayload) error {
-	if c == nil || c.client == nil {
-		return nil
-	}
-
-	task, err := NewAuditCallLogTask(payload)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
 	return normalizeEnqueueError(err)
 }
 

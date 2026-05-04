@@ -31,15 +31,16 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 }
 
 func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
-	if o.auditor == nil || !strings.EqualFold(evt.Source, "call_log") {
+	if !strings.EqualFold(evt.Source, "call_log") {
 		return
 	}
-	o.log.Info(orchestratorAutomationLog, "agent", "auditor", "decision", "evaluate", "reason", "call_log_source", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
 	if o.automationQueue == nil {
 		o.log.Error("orchestrator: automation queue not configured for call log audit", "serviceId", evt.LeadServiceID)
 		return
 	}
-	if err := o.automationQueue.EnqueueAuditCallLog(context.Background(), scheduler.AuditCallLogPayload{
+	o.log.Info(orchestratorAutomationLog, "agent", "auditor", "decision", "evaluate", "reason", "call_log_source", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
+	if err := o.automationQueue.EnqueueAgentTask(context.Background(), scheduler.AgentTaskPayload{
+		Workspace:     "auditor",
 		TenantID:      evt.TenantID.String(),
 		LeadID:        evt.LeadID.String(),
 		LeadServiceID: evt.LeadServiceID.String(),

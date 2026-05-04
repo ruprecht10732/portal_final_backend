@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scanned_at": "2026-04-28T15:54:47.518Z",
+  "scanned_at": "2026-05-04T13:57:19.060Z",
   "files": [
     {
       "path": ".github/workflows/agent-eval.yml",
@@ -61,16 +61,16 @@
     {
       "path": "docs/agent-runtime-flow.md",
       "title": "Agent Runtime Flow",
-      "summary": "This page describes the actual backend agent chain as implemented today. - `LeadCreated` - `LeadServiceAdded` These events try to start an initial Gatekeeper run. - `AttachmentUploaded` Image attac...",
-      "lines": 55,
-      "mtime": 1773261046166.4126
+      "summary": "This page describes the actual backend agent chain as implemented today. - `LeadCreated` - `LeadServiceAdded` These events try to start an initial Gatekeeper run via the unified `AgentTaskScheduler...",
+      "lines": 69,
+      "mtime": 1777902994991.848
     },
     {
       "path": "docs/agent-workspace-architecture.md",
       "title": "Agent Workspace Architecture",
       "summary": "This repository uses a convention-based file workspace model for backend agents. - Keep static agent behavior on disk in markdown workspaces. - Keep runtime data composition, typed tool contracts, ...",
-      "lines": 92,
-      "mtime": 1773310789538.2795
+      "lines": 101,
+      "mtime": 1777903038992.1162
     },
     {
       "path": "docs/agentic-backend-gap-analysis.md",

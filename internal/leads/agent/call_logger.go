@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -21,7 +20,6 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
-	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/adk/confirmation"
 	"portal_final_backend/platform/ai/openaicompat"
@@ -45,6 +43,19 @@ const dateTimeShortLayout = "2006-01-02 15:04"
 var (
 	errMissingContext = errors.New("missing context")
 )
+
+// withCallLoggerDeps wraps a handler that needs CallLoggerToolDeps so the
+// wrapper automatically resolves dependencies from the tool context.
+func withCallLoggerDeps[In any, Out any](fn func(tool.Context, *CallLoggerToolDeps, In) (Out, error)) func(tool.Context, In) (Out, error) {
+	return func(ctx tool.Context, input In) (Out, error) {
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			var zero Out
+			return zero, err
+		}
+		return fn(ctx, deps, input)
+	}
+}
 
 // CallLogResult represents the result of processing a call summary
 type CallLogResult struct {
@@ -255,12 +266,6 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 
 // NewCallLogger creates a new CallLogger agent
 func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus, sessionService session.Service) (*CallLogger, error) {
-	kimi := openaicompat.NewModel(modelCfg)
-	workspace, err := orchestration.LoadAgentWorkspace("call-logger")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load call logger workspace context: %w", err)
-	}
-
 	logger := &CallLogger{
 		repo:           repo,
 		booker:         booker,
@@ -273,38 +278,27 @@ func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		},
 	}
 
-	// Build tools
 	tools, err := buildCallLoggerTools()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build call logger tools: %w", err)
 	}
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "call_logger_tools", tools)
-	toolsets = applyRBACToolsets(toolsets)
 
-	// Create the ADK agent
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "CallLogger",
-		Model:       kimi,
-		Description: "Post-call processing assistant that converts natural language call summaries into structured database updates (Notes, Status changes, Appointments).",
-		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
-	})
+	llm := openaicompat.NewModel(modelCfg)
+	kit, err := BuildAgentKit(
+		"CallLogger",
+		"Post-call processing assistant that converts natural language call summaries into structured database updates (Notes, Status changes, Appointments).",
+		"call-logger",
+		"call_logger",
+		llm,
+		sessionService,
+		tools,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create call logger agent: %w", err)
+		return nil, err
 	}
 
-	// Create the runner
-	r, err := runner.New(runner.Config{
-		AppName:        logger.appName,
-		Agent:          adkAgent,
-		SessionService: logger.sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create call logger runner: %w", err)
-	}
-
-	logger.agent = adkAgent
-	logger.runner = r
+	logger.agent = kit.Agent
+	logger.runner = kit.Runner
 
 	return logger, nil
 }
@@ -883,13 +877,7 @@ var validLeadStatuses = map[string]bool{
 }
 
 func buildUpdateStatusTool() (tool.Tool, error) {
-	return apptools.NewUpdateStatusTool(func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
-		deps, err := GetCallLoggerDeps(ctx)
-		if err != nil {
-			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, err
-		}
-		return executeUpdateStatus(ctx, deps, input)
-	})
+	return apptools.NewUpdateStatusTool(withCallLoggerDeps(executeUpdateStatus))
 }
 
 func executeUpdateStatus(ctx tool.Context, deps *CallLoggerToolDeps, input UpdateStatusInput) (UpdateStatusOutput, error) {
@@ -928,36 +916,18 @@ func executeUpdateStatus(ctx tool.Context, deps *CallLoggerToolDeps, input Updat
 }
 
 func buildScheduleVisitTool() (tool.Tool, error) {
-	return apptools.NewScheduleVisitTool(func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
-		deps, err := GetCallLoggerDeps(ctx)
-		if err != nil {
-			return ScheduleVisitOutput{}, err
-		}
-		return executeScheduleVisit(deps, input)
-	})
+	return apptools.NewScheduleVisitTool(withCallLoggerDeps(executeScheduleVisit))
 }
 
 func buildRescheduleVisitTool() (tool.Tool, error) {
-	return apptools.NewRescheduleVisitTool(func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
-		deps, err := GetCallLoggerDeps(ctx)
-		if err != nil {
-			return RescheduleVisitOutput{}, err
-		}
-		return executeRescheduleVisit(deps, input)
-	})
+	return apptools.NewRescheduleVisitTool(withCallLoggerDeps(executeRescheduleVisit))
 }
 
 func buildCancelVisitTool() (tool.Tool, error) {
-	return apptools.NewCancelVisitTool(func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
-		deps, err := GetCallLoggerDeps(ctx)
-		if err != nil {
-			return CancelVisitOutput{}, err
-		}
-		return executeCancelVisit(deps, input)
-	})
+	return apptools.NewCancelVisitTool(withCallLoggerDeps(executeCancelVisit))
 }
 
-func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
+func executeScheduleVisit(ctx tool.Context, deps *CallLoggerToolDeps, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
 	tenantID, userID, leadID, serviceID, ok := deps.GetContext()
 	if !ok {
 		return ScheduleVisitOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -988,7 +958,7 @@ func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (S
 		sendEmail = *input.SendConfirmationEmail
 	}
 
-	err = deps.Booker.BookLeadVisit(context.Background(), ports.BookVisitParams{
+	err = deps.Booker.BookLeadVisit(ctx, ports.BookVisitParams{
 		TenantID:              tenantID,
 		UserID:                userID,
 		LeadID:                leadID,
@@ -1093,13 +1063,7 @@ func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, t
 }
 
 func buildCallLoggerUpdatePipelineStageTool() (tool.Tool, error) {
-	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		deps, err := GetCallLoggerDeps(ctx)
-		if err != nil {
-			return UpdatePipelineStageOutput{}, err
-		}
-		return handleCallLoggerUpdatePipelineStage(ctx, deps, input)
-	})
+	return apptools.NewUpdatePipelineStageTool(withCallLoggerDeps(handleCallLoggerUpdatePipelineStage))
 }
 
 type callLoggerStageContext struct {
@@ -1181,7 +1145,7 @@ func updateCallLoggerPipelineStage(deps *CallLoggerToolDeps, ctx tool.Context, s
 	return err
 }
 
-func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+func executeRescheduleVisit(ctx tool.Context, deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
 	tenantID, userID, _, serviceID, ok := deps.GetContext()
 	if !ok {
 		return RescheduleVisitOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -1191,9 +1155,9 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 		return RescheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, errors.New(errBookerNotConfigured)
 	}
 
-	if _, err := deps.Booker.GetLeadVisitByService(context.Background(), tenantID, serviceID, userID); err != nil {
+	if _, err := deps.Booker.GetLeadVisitByService(ctx, tenantID, serviceID, userID); err != nil {
 		if apperr.Is(err, apperr.KindNotFound) {
-			return handleMissingVisitFallback(deps, input)
+			return handleMissingVisitFallback(ctx, deps, input)
 		}
 		return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
 	}
@@ -1203,7 +1167,7 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 		return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
 	}
 
-	err = deps.Booker.RescheduleLeadVisit(context.Background(), ports.RescheduleVisitParams{
+	err = deps.Booker.RescheduleLeadVisit(ctx, ports.RescheduleVisitParams{
 		TenantID:      tenantID,
 		UserID:        userID,
 		LeadServiceID: serviceID,
@@ -1220,9 +1184,9 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 	return RescheduleVisitOutput{Success: true, Message: "Appointment rescheduled"}, nil
 }
 
-func handleMissingVisitFallback(deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+func handleMissingVisitFallback(ctx tool.Context, deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
 	deps.MarkRescheduleFallback()
-	scheduled, scheduleErr := executeScheduleVisit(deps, ScheduleVisitInput{
+	scheduled, scheduleErr := executeScheduleVisit(ctx, deps, ScheduleVisitInput{
 		StartTime: input.StartTime,
 		EndTime:   input.EndTime,
 		Title:     input.Title,
@@ -1257,7 +1221,7 @@ func parseRescheduleInput(input RescheduleVisitInput) (time.Time, time.Time, *st
 	return startTime, endTime, title, desc, nil
 }
 
-func executeCancelVisit(deps *CallLoggerToolDeps, input CancelVisitInput) (CancelVisitOutput, error) {
+func executeCancelVisit(ctx tool.Context, deps *CallLoggerToolDeps, input CancelVisitInput) (CancelVisitOutput, error) {
 	_ = input
 	tenantID, userID, _, serviceID, ok := deps.GetContext()
 	if !ok {
@@ -1268,7 +1232,7 @@ func executeCancelVisit(deps *CallLoggerToolDeps, input CancelVisitInput) (Cance
 		return CancelVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, errors.New(errBookerNotConfigured)
 	}
 
-	err := deps.Booker.CancelLeadVisit(context.Background(), ports.CancelVisitParams{
+	err := deps.Booker.CancelLeadVisit(ctx, ports.CancelVisitParams{
 		TenantID:      tenantID,
 		UserID:        userID,
 		LeadServiceID: serviceID,

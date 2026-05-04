@@ -99,48 +99,6 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 	}
 }
 
-func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
-	lead, service, notes, visitReport, attachments := testPromptFixtures()
-
-	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		visitReport:   visitReport,
-		intakeContext: gatekeeperIntakeRequirement,
-		attachments:   attachments,
-	})
-
-	checks := []string{
-		"Photo-derived measurements are advisory only unless explicitly visible, labeled, or otherwise directly stated in trusted context.",
-		"Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed.",
-		"Needs on-site measurement: Exacte dagmaat ontbreekt",
-	}
-
-	for _, token := range checks {
-		if !strings.Contains(prompt, token) {
-			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
-		}
-	}
-}
-
-func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
-	lead, service, notes, _, _ := testPromptFixtures()
-	prompt := buildScopeAnalyzerPrompt(lead, service, notes)
-
-	checks := []string{
-		"Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.",
-		"If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension UNLESS that dimension is already verified through a non-photo source such as an appointment measurement or an explicit user note.",
-		"For repair, adjustment, diagnosis, inspection, or replacement work, missing secondary measurements are not critical blockers when the primary dimensions come from a trusted source",
-	}
-
-	for _, token := range checks {
-		if !strings.Contains(prompt, token) {
-			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
-		}
-	}
-}
-
 func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 	lead, service, notes, visitReport, attachments := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{

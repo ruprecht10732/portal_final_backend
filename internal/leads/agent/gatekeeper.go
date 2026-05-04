@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
@@ -23,7 +22,6 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
-	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/adk/confirmation"
 )
 
@@ -41,13 +39,8 @@ type Gatekeeper struct {
 	lastSessionResult *SessionResult
 }
 
-// NewGatekeeper creates a Gatekeeper agent.
-func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service, sessionService session.Service) (*Gatekeeper, error) {
-	workspace, err := orchestration.LoadAgentWorkspace("gatekeeper")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load gatekeeper workspace context: %w", err)
-	}
-
+// newGatekeeper creates a Gatekeeper agent.
+func newGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service, sessionService session.Service) (*Gatekeeper, error) {
 	deps := &ToolDependencies{
 		Repo:           repo,
 		EventBus:       eventBus,
@@ -55,7 +48,7 @@ func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus even
 		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
-	updateStageTool, err := createUpdatePipelineStageTool(deps)
+	updateStageTool, err := createUpdatePipelineStageTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
@@ -71,32 +64,23 @@ func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus even
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadDetails tool: %w", err)
 	}
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "gatekeeper_tools", []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool})
-	toolsets = applyRBACToolsets(toolsets)
 
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "Gatekeeper",
-		Model:       llm,
-		Description: "Validates intake requirements and advances the lead pipeline.",
-		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
-	})
+	kit, err := BuildAgentKit(
+		"Gatekeeper",
+		"Validates intake requirements and advances the lead pipeline.",
+		"gatekeeper",
+		"gatekeeper",
+		llm,
+		sessionService,
+		[]tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gatekeeper agent: %w", err)
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        "gatekeeper",
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gatekeeper runner: %w", err)
+		return nil, err
 	}
 
 	return &Gatekeeper{
-		agent:          adkAgent,
-		runner:         r,
+		agent:          kit.Agent,
+		runner:         kit.Runner,
 		sessionService: sessionService,
 		appName:        "gatekeeper",
 		repo:           repo,

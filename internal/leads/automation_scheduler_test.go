@@ -16,36 +16,60 @@ import (
 )
 
 type fakeAutomationScheduler struct {
-	gatekeeperPayloads []scheduler.GatekeeperRunPayload
-	estimatorPayloads  []scheduler.EstimatorRunPayload
-	dispatcherPayloads []scheduler.DispatcherRunPayload
-	auditVisitPayloads []scheduler.AuditVisitReportPayload
-	auditCallPayloads  []scheduler.AuditCallLogPayload
+	agentTaskPayloads []scheduler.AgentTaskPayload
 }
 
-func (f *fakeAutomationScheduler) EnqueueGatekeeperRun(_ context.Context, payload scheduler.GatekeeperRunPayload) error {
-	f.gatekeeperPayloads = append(f.gatekeeperPayloads, payload)
+func (f *fakeAutomationScheduler) EnqueueAgentTask(_ context.Context, payload scheduler.AgentTaskPayload) error {
+	f.agentTaskPayloads = append(f.agentTaskPayloads, payload)
 	return nil
 }
 
-func (f *fakeAutomationScheduler) EnqueueEstimatorRun(_ context.Context, payload scheduler.EstimatorRunPayload) error {
-	f.estimatorPayloads = append(f.estimatorPayloads, payload)
+func (f *fakeAutomationScheduler) EnqueueLogCall(_ context.Context, _ scheduler.LogCallPayload) error {
 	return nil
 }
 
-func (f *fakeAutomationScheduler) EnqueueDispatcherRun(_ context.Context, payload scheduler.DispatcherRunPayload) error {
-	f.dispatcherPayloads = append(f.dispatcherPayloads, payload)
+func (f *fakeAutomationScheduler) EnqueueStaleLeadReEngage(_ context.Context, _ scheduler.StaleLeadReEngagePayload) error {
 	return nil
 }
 
-func (f *fakeAutomationScheduler) EnqueueAuditVisitReport(_ context.Context, payload scheduler.AuditVisitReportPayload) error {
-	f.auditVisitPayloads = append(f.auditVisitPayloads, payload)
-	return nil
+func (f *fakeAutomationScheduler) gatekeeperPayloads() []scheduler.AgentTaskPayload {
+	var out []scheduler.AgentTaskPayload
+	for _, p := range f.agentTaskPayloads {
+		if p.Workspace == "gatekeeper" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
-func (f *fakeAutomationScheduler) EnqueueAuditCallLog(_ context.Context, payload scheduler.AuditCallLogPayload) error {
-	f.auditCallPayloads = append(f.auditCallPayloads, payload)
-	return nil
+func (f *fakeAutomationScheduler) estimatorPayloads() []scheduler.AgentTaskPayload {
+	var out []scheduler.AgentTaskPayload
+	for _, p := range f.agentTaskPayloads {
+		if p.Workspace == "calculator" && p.Mode == "estimator" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (f *fakeAutomationScheduler) dispatcherPayloads() []scheduler.AgentTaskPayload {
+	var out []scheduler.AgentTaskPayload
+	for _, p := range f.agentTaskPayloads {
+		if p.Workspace == "matchmaker" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (f *fakeAutomationScheduler) auditCallPayloads() []scheduler.AgentTaskPayload {
+	var out []scheduler.AgentTaskPayload
+	for _, p := range f.agentTaskPayloads {
+		if p.Workspace == "auditor" && p.AppointmentID == "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func TestHandleEstimationStageEnqueuesEstimatorWhenSchedulerConfigured(t *testing.T) {
@@ -59,11 +83,11 @@ func TestHandleEstimationStageEnqueuesEstimatorWhenSchedulerConfigured(t *testin
 	evt := eventsPipelineStageChanged(domain.PipelineStageEstimation)
 	o.handleEstimationStage(evt)
 
-	if len(queue.estimatorPayloads) != 1 {
-		t.Fatalf("expected estimator job to be enqueued, got %d", len(queue.estimatorPayloads))
+	if len(queue.estimatorPayloads()) != 1 {
+		t.Fatalf("expected estimator job to be enqueued, got %d", len(queue.estimatorPayloads()))
 	}
-	if queue.estimatorPayloads[0].LeadServiceID != evt.LeadServiceID.String() {
-		t.Fatalf("unexpected lead service id: %#v", queue.estimatorPayloads[0])
+	if queue.estimatorPayloads()[0].LeadServiceID != evt.LeadServiceID.String() {
+		t.Fatalf("unexpected lead service id: %#v", queue.estimatorPayloads()[0])
 	}
 }
 
@@ -83,8 +107,8 @@ func TestHandleFulfillmentStageEnqueuesDispatcherWhenSchedulerConfigured(t *test
 	evt := eventsPipelineStageChanged(domain.PipelineStageFulfillment)
 	o.handleFulfillmentStage(evt)
 
-	if len(queue.dispatcherPayloads) != 1 {
-		t.Fatalf("expected dispatcher job to be enqueued, got %d", len(queue.dispatcherPayloads))
+	if len(queue.dispatcherPayloads()) != 1 {
+		t.Fatalf("expected dispatcher job to be enqueued, got %d", len(queue.dispatcherPayloads()))
 	}
 }
 
@@ -92,15 +116,15 @@ func TestMaybeRunAuditorForCallLogEnqueuesAuditWhenSchedulerConfigured(t *testin
 	queue := &fakeAutomationScheduler{}
 	o := &Orchestrator{
 		automationQueue: queue,
-		auditor:         &agent.Auditor{},
+		runtime:         &agent.Runtime{},
 		log:             logger.New("development"),
 	}
 
 	evt := eventsLeadDataChanged("call_log")
 	o.maybeRunAuditorForCallLog(evt)
 
-	if len(queue.auditCallPayloads) != 1 {
-		t.Fatalf("expected call-log audit job to be enqueued, got %d", len(queue.auditCallPayloads))
+	if len(queue.auditCallPayloads()) != 1 {
+		t.Fatalf("expected call-log audit job to be enqueued, got %d", len(queue.auditCallPayloads()))
 	}
 }
 
@@ -115,8 +139,8 @@ func TestMaybeRunGatekeeperForDataChangeEnqueuesGatekeeperWhenSchedulerConfigure
 
 	o.maybeRunGatekeeperForDataChange(svc, evt)
 
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected gatekeeper job to be enqueued, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected gatekeeper job to be enqueued, got %d", len(queue.gatekeeperPayloads()))
 	}
 }
 
@@ -172,11 +196,11 @@ func TestInitialGatekeeperBurstCollapsesWithFollowUpDataChange(t *testing.T) {
 		Source:        "user_update",
 	})
 
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected lead-created enqueue plus immediate data-change follow-up to collapse into one queue entry, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected lead-created enqueue plus immediate data-change follow-up to collapse into one queue entry, got %d", len(queue.gatekeeperPayloads()))
 	}
-	if queue.gatekeeperPayloads[0].LeadServiceID != serviceID.String() {
-		t.Fatalf("unexpected gatekeeper payload after burst collapse: %#v", queue.gatekeeperPayloads[0])
+	if queue.gatekeeperPayloads()[0].LeadServiceID != serviceID.String() {
+		t.Fatalf("unexpected gatekeeper payload after burst collapse: %#v", queue.gatekeeperPayloads()[0])
 	}
 }
 
@@ -191,8 +215,8 @@ func TestMaybeRunGatekeeperForDataChangeSkipsManualIntervention(t *testing.T) {
 
 	o.maybeRunGatekeeperForDataChange(svc, evt)
 
-	if len(queue.gatekeeperPayloads) != 0 {
-		t.Fatalf("expected no gatekeeper job to be enqueued while in manual intervention, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 0 {
+		t.Fatalf("expected no gatekeeper job to be enqueued while in manual intervention, got %d", len(queue.gatekeeperPayloads()))
 	}
 }
 
@@ -207,8 +231,8 @@ func TestEstimatorBlockerLoopScenarioQueuesEstimatorThenGatekeeperReplyReview(t 
 	estimationEvt := eventsPipelineStageChanged(domain.PipelineStageEstimation)
 	o.handleEstimationStage(estimationEvt)
 
-	if len(queue.estimatorPayloads) != 1 {
-		t.Fatalf("expected estimator job to be enqueued once, got %d", len(queue.estimatorPayloads))
+	if len(queue.estimatorPayloads()) != 1 {
+		t.Fatalf("expected estimator job to be enqueued once, got %d", len(queue.estimatorPayloads()))
 	}
 
 	replyEvt := events.LeadDataChanged{
@@ -220,11 +244,11 @@ func TestEstimatorBlockerLoopScenarioQueuesEstimatorThenGatekeeperReplyReview(t 
 	}
 	o.maybeRunGatekeeperForDataChange(repositoryLeadService(domain.PipelineStageNurturing), replyEvt)
 
-	if len(queue.gatekeeperPayloads) != 1 {
-		t.Fatalf("expected customer reply in Nurturing to queue one gatekeeper review, got %d", len(queue.gatekeeperPayloads))
+	if len(queue.gatekeeperPayloads()) != 1 {
+		t.Fatalf("expected customer reply in Nurturing to queue one gatekeeper review, got %d", len(queue.gatekeeperPayloads()))
 	}
-	if queue.gatekeeperPayloads[0].LeadServiceID != estimationEvt.LeadServiceID.String() {
-		t.Fatalf("unexpected gatekeeper lead service id: %#v", queue.gatekeeperPayloads[0])
+	if queue.gatekeeperPayloads()[0].LeadServiceID != estimationEvt.LeadServiceID.String() {
+		t.Fatalf("unexpected gatekeeper lead service id: %#v", queue.gatekeeperPayloads()[0])
 	}
 }
 

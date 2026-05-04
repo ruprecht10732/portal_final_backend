@@ -15,7 +15,8 @@ import (
 )
 
 func (o *Orchestrator) OnVisitReportSubmitted(ctx context.Context, evt events.VisitReportSubmitted) {
-	if o.auditor == nil {
+	if o.automationQueue == nil {
+		o.log.Error("orchestrator: automation queue not configured for visit report audit", "serviceId", evt.LeadServiceID)
 		return
 	}
 
@@ -28,11 +29,8 @@ func (o *Orchestrator) OnVisitReportSubmitted(ctx context.Context, evt events.Vi
 		return
 	}
 
-	if o.automationQueue == nil {
-		o.log.Error("orchestrator: automation queue not configured for visit report audit", "serviceId", evt.LeadServiceID)
-		return
-	}
-	if err := o.automationQueue.EnqueueAuditVisitReport(ctx, scheduler.AuditVisitReportPayload{
+	if err := o.automationQueue.EnqueueAgentTask(ctx, scheduler.AgentTaskPayload{
+		Workspace:     "auditor",
 		TenantID:      evt.TenantID.String(),
 		LeadID:        evt.LeadID.String(),
 		LeadServiceID: evt.LeadServiceID.String(),

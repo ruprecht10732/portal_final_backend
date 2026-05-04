@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -17,7 +16,6 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/adk/confirmation"
 	"portal_final_backend/platform/ai/openaicompat"
 )
@@ -32,14 +30,8 @@ type Dispatcher struct {
 	toolDeps       *ToolDependencies
 }
 
-// NewDispatcher creates a Dispatcher agent.
-func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Dispatcher, error) {
-	kimi := openaicompat.NewModel(modelCfg)
-	workspace, err := orchestration.LoadAgentWorkspace("matchmaker")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load matchmaker workspace context: %w", err)
-	}
-
+// newDispatcher creates a Dispatcher agent.
+func newDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Dispatcher, error) {
 	deps := &ToolDependencies{
 		Repo:           repo,
 		EventBus:       eventBus,
@@ -51,7 +43,7 @@ func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		return nil, fmt.Errorf("failed to build FindMatchingPartners tool: %w", err)
 	}
 
-	updateStageTool, err := createUpdatePipelineStageTool(deps)
+	updateStageTool, err := createUpdatePipelineStageTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
@@ -60,32 +52,24 @@ func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository
 	if err != nil {
 		return nil, fmt.Errorf("failed to build CreatePartnerOffer tool: %w", err)
 	}
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "matchmaker_tools", []tool.Tool{findPartnersTool, createOfferTool, updateStageTool})
-	toolsets = applyRBACToolsets(toolsets)
 
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "Dispatcher",
-		Model:       kimi,
-		Description: "Fulfillment manager that finds partner matches and advances the pipeline.",
-		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
-	})
+	llm := openaicompat.NewModel(modelCfg)
+	kit, err := BuildAgentKit(
+		"Dispatcher",
+		"Fulfillment manager that finds partner matches and advances the pipeline.",
+		"matchmaker",
+		"dispatcher",
+		llm,
+		sessionService,
+		[]tool.Tool{findPartnersTool, createOfferTool, updateStageTool},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create dispatcher agent: %w", err)
-	}
-
-	r, err := runner.New(runner.Config{
-		AppName:        "dispatcher",
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dispatcher runner: %w", err)
+		return nil, err
 	}
 
 	return &Dispatcher{
-		agent:          adkAgent,
-		runner:         r,
+		agent:          kit.Agent,
+		runner:         kit.Runner,
 		sessionService: sessionService,
 		appName:        "dispatcher",
 		repo:           repo,
