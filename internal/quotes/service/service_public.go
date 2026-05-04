@@ -39,8 +39,12 @@ func (s *Service) GetPublic(ctx context.Context, token string) (*transport.Publi
 		return nil, err
 	}
 	readOnly := isReadOnlyToken(tokenKind)
-	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
-		return nil, apperr.Gone(msgLinkExpired)
+	// Accepted quotes remain viewable/downloadable even after the public token
+	// expires — the customer has already acted on the proposal.
+	if quote.Status != string(transport.QuoteStatusAccepted) {
+		if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
+			return nil, apperr.Gone(msgLinkExpired)
+		}
 	}
 
 	if !readOnly && quote.ViewedAt == nil {
