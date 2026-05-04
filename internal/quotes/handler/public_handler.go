@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -274,7 +275,31 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
 		return
 	}
-	streamPDFFromReader(c, result.QuoteNumber, reader)
+
+	pdfBytes, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to read PDF", readErr.Error())
+		return
+	}
+
+	if validateErr := validatePDFBytes(pdfBytes); validateErr != nil {
+		slog.Warn("stored PDF is invalid, deleting and regenerating", "quoteID", storageMeta.QuoteID, "fileKey", pdfFileKey, "error", validateErr.Error())
+		if delErr := h.storageSvc.DeleteObject(c.Request.Context(), h.pdfBucket, pdfFileKey); delErr != nil {
+			slog.Error("failed to delete invalid PDF from storage", "fileKey", pdfFileKey, "error", delErr.Error())
+		}
+		if invErr := h.svc.InvalidateQuotePDF(c.Request.Context(), storageMeta.QuoteID); invErr != nil {
+			slog.Error("failed to invalidate PDF file key", "quoteID", storageMeta.QuoteID, "error", invErr.Error())
+		}
+		if h.tryServeOnDemandPDF(c, storageMeta.QuoteID, storageMeta.OrgID, result.QuoteNumber) {
+			return
+		}
+		httpkit.Error(c, http.StatusInternalServerError, "stored PDF is invalid and regeneration failed", validateErr.Error())
+		return
+	}
+
+	slog.Info("streaming PDF from storage", "quoteNumber", result.QuoteNumber, "bytes", len(pdfBytes))
+	servePDFBytes(c, result.QuoteNumber, pdfBytes)
 }
 
 func (h *PublicHandler) tryServeOnDemandPDF(c *gin.Context, quoteID uuid.UUID, organizationID uuid.UUID, quoteNumber string) bool {

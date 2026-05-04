@@ -1343,6 +1343,11 @@ func (s *Service) GetPublicQuoteStorageMeta(ctx context.Context, token string) (
 	return &PublicQuoteStorageMeta{QuoteID: quote.ID, OrgID: quote.OrganizationID, PDFFileKey: pdfFileKey}, nil
 }
 
+// InvalidateQuotePDF clears the stored PDF file key so the next download triggers regeneration.
+func (s *Service) InvalidateQuotePDF(ctx context.Context, quoteID uuid.UUID) error {
+	return s.repo.SetPDFFileKey(ctx, quoteID, "")
+}
+
 func (s *Service) GetPreviewLink(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (*transport.QuotePreviewLinkResponse, error) {
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
