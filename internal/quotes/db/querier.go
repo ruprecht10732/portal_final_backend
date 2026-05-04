@@ -42,6 +42,7 @@ type Querier interface {
 	GetGenerateQuoteJob(ctx context.Context, arg GetGenerateQuoteJobParams) (RacAiQuoteJob, error)
 	GetGenerateQuoteJobByID(ctx context.Context, id pgtype.UUID) (RacAiQuoteJob, error)
 	GetLatestNonDraftByLead(ctx context.Context, arg GetLatestNonDraftByLeadParams) (GetLatestNonDraftByLeadRow, error)
+	GetLatestNonDraftByLeadService(ctx context.Context, arg GetLatestNonDraftByLeadServiceParams) (GetLatestNonDraftByLeadServiceRow, error)
 	GetLatestQuoteAIReview(ctx context.Context, arg GetLatestQuoteAIReviewParams) (RacQuoteAiReview, error)
 	GetLatestQuotePricingSnapshotByQuote(ctx context.Context, arg GetLatestQuotePricingSnapshotByQuoteParams) (RacQuotePricingSnapshot, error)
 	GetLatestQuotePricingSnapshotRevision(ctx context.Context, arg GetLatestQuotePricingSnapshotRevisionParams) (int32, error)

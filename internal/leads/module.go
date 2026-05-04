@@ -177,6 +177,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		AgentTaskQueue: nil,
 	})
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
+	publicHandler.SetPublicAPIBaseURL(cfg.GetPublicAPIBaseURL())
 
 	// Stale lead detector for the dashboard API
 	staleDetector := maintenance.NewStaleLeadDetector(pool, log)

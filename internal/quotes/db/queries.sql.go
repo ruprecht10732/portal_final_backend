@@ -1296,6 +1296,48 @@ func (q *Queries) GetLatestNonDraftByLead(ctx context.Context, arg GetLatestNonD
 	return i, err
 }
 
+const getLatestNonDraftByLeadService = `-- name: GetLatestNonDraftByLeadService :one
+SELECT id, organization_id, lead_id, lead_service_id, quote_number, status, total_cents, public_token, pdf_file_key
+FROM RAC_quotes
+WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'Draft'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestNonDraftByLeadServiceParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLatestNonDraftByLeadServiceRow struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	LeadID         pgtype.UUID `json:"lead_id"`
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	QuoteNumber    string      `json:"quote_number"`
+	Status         QuoteStatus `json:"status"`
+	TotalCents     int64       `json:"total_cents"`
+	PublicToken    pgtype.Text `json:"public_token"`
+	PdfFileKey     pgtype.Text `json:"pdf_file_key"`
+}
+
+func (q *Queries) GetLatestNonDraftByLeadService(ctx context.Context, arg GetLatestNonDraftByLeadServiceParams) (GetLatestNonDraftByLeadServiceRow, error) {
+	row := q.db.QueryRow(ctx, getLatestNonDraftByLeadService, arg.LeadServiceID, arg.OrganizationID)
+	var i GetLatestNonDraftByLeadServiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.QuoteNumber,
+		&i.Status,
+		&i.TotalCents,
+		&i.PublicToken,
+		&i.PdfFileKey,
+	)
+	return i, err
+}
+
 const getLatestQuoteAIReview = `-- name: GetLatestQuoteAIReview :one
 SELECT id, organization_id, quote_id, decision, summary,
   findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at

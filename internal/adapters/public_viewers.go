@@ -47,6 +47,17 @@ func (a *QuotePublicAdapter) GetActiveQuote(ctx context.Context, leadID, orgID u
 	return a.buildPublicQuoteSummary(ctx, quote), nil
 }
 
+func (a *QuotePublicAdapter) GetActiveQuoteForService(ctx context.Context, leadServiceID, orgID uuid.UUID) (*ports.PublicQuoteSummary, error) {
+	if a == nil || a.svc == nil {
+		return nil, nil
+	}
+	quote, err := a.svc.GetLatestNonDraftByLeadService(ctx, leadServiceID, orgID)
+	if err != nil || quote == nil {
+		return nil, err
+	}
+	return a.buildPublicQuoteSummary(ctx, quote), nil
+}
+
 func (a *QuotePublicAdapter) GetAcceptedQuote(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
 	if a == nil || a.acceptedQuoteIDReader == nil || a.quotesRepo == nil {
 		return nil, nil

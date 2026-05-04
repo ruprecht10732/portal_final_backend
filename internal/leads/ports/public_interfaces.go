@@ -73,6 +73,7 @@ type PublicAvailableSlotsResponse struct {
 // QuotePublicViewer allows the leads domain to fetch active quotes.
 type QuotePublicViewer interface {
 	GetActiveQuote(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*PublicQuoteSummary, error)
+	GetActiveQuoteForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*PublicQuoteSummary, error)
 }
 
 // AppointmentPublicViewer allows the leads domain to fetch scheduled visits.

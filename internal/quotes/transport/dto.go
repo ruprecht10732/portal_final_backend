@@ -563,6 +563,7 @@ type PublicQuoteResponse struct {
 	Items               []PublicQuoteItemResponse `json:"items"`
 	Attachments         []QuoteAttachmentResponse `json:"attachments"`
 	URLs                []QuoteURLResponse        `json:"urls"`
+	PublicToken         string                    `json:"publicToken"`
 	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
 	FinancingDisclaimer bool                      `json:"financingDisclaimer"`

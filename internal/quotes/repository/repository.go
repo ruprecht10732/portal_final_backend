@@ -430,6 +430,22 @@ func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UU
 	return &quote, nil
 }
 
+// GetLatestNonDraftByLeadService returns the most recent non-draft quote for a lead service.
+func (r *Repository) GetLatestNonDraftByLeadService(ctx context.Context, leadServiceID uuid.UUID, orgID uuid.UUID) (*Quote, error) {
+	row, err := r.queries.GetLatestNonDraftByLeadService(ctx, quotesdb.GetLatestNonDraftByLeadServiceParams{
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(orgID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest non-draft quote for service: %w", err)
+	}
+	quote := quoteFromLatestNonDraftByLeadServiceRow(row)
+	return &quote, nil
+}
+
 // GetItemsByQuoteID retrieves all items for a quote
 func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteItem, error) {
 	return r.listQuoteItemsByQuoteID(ctx, r.queries, quoteID, orgID)
@@ -1886,6 +1902,21 @@ func quoteFromGetByIDRow(row quotesdb.GetQuoteByIDRow) Quote {
 }
 
 func quoteFromLatestNonDraftRow(row quotesdb.GetLatestNonDraftByLeadRow) Quote {
+	return Quote{
+		ID:             uuid.UUID(row.ID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:         uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:  optionalUUID(row.LeadServiceID),
+		VersionNumber:  1,
+		QuoteNumber:    row.QuoteNumber,
+		Status:         string(row.Status),
+		TotalCents:     row.TotalCents,
+		PublicToken:    optionalString(row.PublicToken),
+		PDFFileKey:     optionalString(row.PdfFileKey),
+	}
+}
+
+func quoteFromLatestNonDraftByLeadServiceRow(row quotesdb.GetLatestNonDraftByLeadServiceRow) Quote {
 	return Quote{
 		ID:             uuid.UUID(row.ID.Bytes),
 		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),

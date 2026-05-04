@@ -435,7 +435,11 @@ func (s *Service) buildPublicResponse(ctx context.Context, q *repository.Quote, 
 
 	logoURL := s.presignLogoURL(ctx, logoFileKey)
 
-	return &transport.PublicQuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, OrganizationName: organizationName, LogoURL: logoURL, CustomerName: customerName, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: calc.SubtotalCents, DiscountAmountCents: calc.DiscountAmountCents, TaxTotalCents: calc.VatTotalCents, TotalCents: calc.TotalCents, VatBreakdown: calc.VatBreakdown, ValidUntil: q.ValidUntil, Notes: q.Notes, Items: respItems, Attachments: attachments, URLs: urls, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, FinancingDisclaimer: q.FinancingDisclaimer, PagePerItem: q.PagePerItem, IsReadOnly: readOnly}, nil
+	publicToken := ""
+	if q.PublicToken != nil {
+		publicToken = *q.PublicToken
+	}
+	return &transport.PublicQuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, OrganizationName: organizationName, LogoURL: logoURL, CustomerName: customerName, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: calc.SubtotalCents, DiscountAmountCents: calc.DiscountAmountCents, TaxTotalCents: calc.VatTotalCents, TotalCents: calc.TotalCents, VatBreakdown: calc.VatBreakdown, ValidUntil: q.ValidUntil, Notes: q.Notes, Items: respItems, Attachments: attachments, URLs: urls, PublicToken: publicToken, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, FinancingDisclaimer: q.FinancingDisclaimer, PagePerItem: q.PagePerItem, IsReadOnly: readOnly}, nil
 }
 
 func (s *Service) presignLogoURL(ctx context.Context, logoFileKey *string) *string {

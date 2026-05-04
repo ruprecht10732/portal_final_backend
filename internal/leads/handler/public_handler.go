@@ -24,16 +24,17 @@ import (
 
 // PublicHandler handles public (unauthenticated) lead portal endpoints.
 type PublicHandler struct {
-	repo        repository.LeadsRepository
-	eventBus    events.Bus
-	sse         *sse.Service
-	storage     storage.StorageService
-	bucket      string
-	val         *validator.Validator
-	quoteViewer ports.QuotePublicViewer
-	apptViewer  ports.AppointmentPublicViewer
-	slotViewer  ports.AppointmentSlotProvider
-	orgViewer   ports.OrganizationPublicViewer
+	repo             repository.LeadsRepository
+	eventBus         events.Bus
+	sse              *sse.Service
+	storage          storage.StorageService
+	bucket           string
+	val              *validator.Validator
+	quoteViewer      ports.QuotePublicViewer
+	apptViewer       ports.AppointmentPublicViewer
+	slotViewer       ports.AppointmentSlotProvider
+	orgViewer        ports.OrganizationPublicViewer
+	publicAPIBaseURL string
 }
 
 const (
@@ -58,6 +59,11 @@ func (h *PublicHandler) SetPublicViewers(quoteViewer ports.QuotePublicViewer, ap
 // SetPublicOrgViewer injects the organization viewer for the public portal.
 func (h *PublicHandler) SetPublicOrgViewer(orgViewer ports.OrganizationPublicViewer) {
 	h.orgViewer = orgViewer
+}
+
+// SetPublicAPIBaseURL sets the public API base URL used to build absolute download links.
+func (h *PublicHandler) SetPublicAPIBaseURL(url string) {
+	h.publicAPIBaseURL = url
 }
 
 // RegisterRoutes registers public lead portal routes under /public/leads.
@@ -103,7 +109,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 
 	var quote *ports.PublicQuoteSummary
 	if h.quoteViewer != nil {
-		quote, _ = h.quoteViewer.GetActiveQuote(c.Request.Context(), lead.ID, lead.OrganizationID)
+		quote, _ = h.quoteViewer.GetActiveQuoteForService(c.Request.Context(), svc.ID, lead.OrganizationID)
 	}
 
 	appt, pendingAppt := h.resolvePublicAppointments(c.Request.Context(), lead.ID, lead.OrganizationID)
@@ -113,7 +119,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 	statusLabel, statusDescription, step := resolveCustomerStatus(svc.PipelineStage, quote, appt)
 
 	prefs := normalizePreferences(svc.CustomerPreferences)
-	quoteLink, downloadLink := buildQuoteLinks(quote)
+	quoteLink, downloadLink := buildQuoteLinks(quote, h.publicAPIBaseURL)
 
 	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), svc.ID, lead.OrganizationID)
 	if err != nil {
@@ -601,13 +607,14 @@ func normalizePreferences(prefs json.RawMessage) json.RawMessage {
 	return prefs
 }
 
-func buildQuoteLinks(quote *ports.PublicQuoteSummary) (string, string) {
+func buildQuoteLinks(quote *ports.PublicQuoteSummary, publicAPIBaseURL string) (string, string) {
 	if quote == nil {
 		return "", ""
 	}
 	quoteLink := fmt.Sprintf("/quote/%s", quote.PublicToken)
 	if quote.Status == "Accepted" && quote.PublicToken != "" {
-		return quoteLink, fmt.Sprintf("/api/v1/public/quotes/%s/pdf", quote.PublicToken)
+		base := strings.TrimRight(publicAPIBaseURL, "/")
+		return quoteLink, fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", base, quote.PublicToken)
 	}
 	return quoteLink, ""
 }

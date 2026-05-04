@@ -29,6 +29,10 @@ func (s *Service) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID,
 	return s.repo.GetLatestNonDraftByLead(ctx, leadID, orgID)
 }
 
+func (s *Service) GetLatestNonDraftByLeadService(ctx context.Context, leadServiceID uuid.UUID, orgID uuid.UUID) (*repository.Quote, error) {
+	return s.repo.GetLatestNonDraftByLeadService(ctx, leadServiceID, orgID)
+}
+
 func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateQuoteResult, error) {
 	if s.promptGen == nil {
 		return nil, apperr.Internal("quote generation is not configured")

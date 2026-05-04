@@ -65,6 +65,13 @@ WHERE lead_id = $1 AND organization_id = $2 AND status != 'Draft'
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetLatestNonDraftByLeadService :one
+SELECT id, organization_id, lead_id, lead_service_id, quote_number, status, total_cents, public_token, pdf_file_key
+FROM RAC_quotes
+WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'Draft'
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: ListQuoteItemsByQuoteID :many
 SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
   unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
