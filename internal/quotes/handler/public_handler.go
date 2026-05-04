@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -257,6 +258,8 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 	}
 
 	pdfFileKey := storageMeta.PDFFileKey
+	slog.Info("public quote PDF download", "token", token, "quoteID", storageMeta.QuoteID, "pdfFileKey", pdfFileKey, "hasGenerator", h.pdfGen != nil)
+
 	if pdfFileKey == "" {
 		// Lazy generation: if no PDF is stored yet but the quote is accepted, generate on the fly
 		if h.tryServeOnDemandPDF(c, storageMeta.QuoteID, storageMeta.OrgID, result.QuoteNumber) {
@@ -276,14 +279,17 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 
 func (h *PublicHandler) tryServeOnDemandPDF(c *gin.Context, quoteID uuid.UUID, organizationID uuid.UUID, quoteNumber string) bool {
 	if h.pdfGen == nil {
+		slog.Warn("on-demand PDF generation skipped: no generator injected", "quoteID", quoteID)
 		return false
 	}
 
 	_, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, organizationID)
 	if genErr != nil {
+		slog.Error("on-demand PDF generation failed", "quoteID", quoteID, "error", genErr.Error())
 		httpkit.Error(c, http.StatusInternalServerError, msgPDFGenerationFailed, genErr.Error())
 		return true
 	}
+	slog.Info("on-demand PDF generated successfully", "quoteID", quoteID, "bytes", len(pdfBytes))
 	servePDFBytes(c, quoteNumber, pdfBytes)
 	return true
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"portal_final_backend/platform/httpkit"
@@ -16,6 +17,7 @@ func servePDFBytes(c *gin.Context, quoteNumber string, pdfBytes []byte) {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to serve PDF", err.Error())
 		return
 	}
+	slog.Info("serving PDF bytes", "quoteNumber", quoteNumber, "bytes", len(pdfBytes))
 	setPDFHeaders(c, quoteNumber)
 	c.Data(http.StatusOK, contentTypePDF, pdfBytes)
 }
@@ -29,6 +31,7 @@ func streamPDFFromReader(c *gin.Context, quoteNumber string, reader io.ReadClose
 		return
 	}
 
+	slog.Info("streaming PDF from storage", "quoteNumber", quoteNumber, "bytes", len(pdfBytes))
 	servePDFBytes(c, quoteNumber, pdfBytes)
 }
 

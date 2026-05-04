@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -83,8 +84,10 @@ func (g *GotenbergClient) ConvertHTML(ctx context.Context, indexHTML []byte, opt
 	}
 	if opts.WaitDelay != "" {
 		fields["waitDelay"] = opts.WaitDelay
-		fields["skipNetworkIdleEvent"] = "true"
 	}
+	// Gotenberg docs: for blank-PDF issues, set skipNetworkIdleEvent=false
+	// so Chromium waits for all resources to settle before capture.
+	fields["skipNetworkIdleEvent"] = "false"
 	for k, v := range fields {
 		if err := writer.WriteField(k, v); err != nil {
 			return nil, fmt.Errorf("write field %s: %w", k, err)
@@ -157,6 +160,7 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 	if len(result) == 0 {
 		return nil, fmt.Errorf("gotenberg %s returned empty body", path)
 	}
+	slog.Debug("gotenberg response", "path", path, "bytes", len(result), "contentType", resp.Header.Get("Content-Type"))
 	return result, nil
 }
 
