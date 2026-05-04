@@ -40,7 +40,13 @@ func validatePDFBytes(pdfBytes []byte) error {
 		return fmt.Errorf("PDF is empty")
 	}
 	if !bytes.HasPrefix(pdfBytes, []byte("%PDF-")) {
-		return fmt.Errorf("PDF has invalid structure")
+		return fmt.Errorf("PDF has invalid structure (missing %%PDF- header, starts with: %q)", string(pdfBytes[:min(len(pdfBytes), 50)]))
+	}
+	// A valid PDF must end with %%EOF (possibly preceded by whitespace/newlines).
+	// Truncated PDFs (e.g. from network errors or size limits) often miss this.
+	trimmed := bytes.TrimRight(pdfBytes, " \t\r\n\x00")
+	if !bytes.HasSuffix(trimmed, []byte("%%EOF")) {
+		return fmt.Errorf("PDF appears truncated (missing %%EOF trailer, size=%d)", len(pdfBytes))
 	}
 	return nil
 }

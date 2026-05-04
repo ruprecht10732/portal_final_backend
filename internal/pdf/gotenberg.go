@@ -149,18 +149,24 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, fmt.Errorf("gotenberg %s returned %d: %s", path, resp.StatusCode, string(errBody))
 	}
 
-	result, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	respCT := resp.Header.Get("Content-Type")
+	result, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response from %s: %w", path, err)
 	}
 	if len(result) == 0 {
 		return nil, fmt.Errorf("gotenberg %s returned empty body", path)
 	}
-	slog.Debug("gotenberg response", "path", path, "bytes", len(result), "contentType", resp.Header.Get("Content-Type"))
+	// Gotenberg should return application/pdf; warn if it doesn't — may indicate
+	// a proxy/CDN rewrite or an unexpected response format.
+	if respCT != "" && respCT != "application/pdf" {
+		slog.Warn("gotenberg returned unexpected content-type", "path", path, "contentType", respCT, "bytes", len(result))
+	}
+	slog.Debug("gotenberg response", "path", path, "bytes", len(result), "contentType", respCT)
 	return result, nil
 }
 
