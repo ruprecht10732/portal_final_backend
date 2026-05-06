@@ -57,23 +57,16 @@ type skillFrontmatter struct {
 
 type skillMetadataFields struct {
 	AllowedTools []string `yaml:"allowed-tools"`
+	SkipPrompts  bool     `yaml:"skip-prompts"`
 }
 
-var workspaceDefinitions = map[string]workspaceDefinition{
-	"gatekeeper":             {workspaceDir: "agents/gatekeeper", skipPrompts: true},
-	"qualifier":              {workspaceDir: "agents/qualifier"},
-	"calculator":             {workspaceDir: "agents/calculator", skipPrompts: true},
-	"matchmaker":             {workspaceDir: "agents/matchmaker", skipPrompts: true},
-	"auditor":                {workspaceDir: "agents/support/auditor"},
-	"call-logger":            {workspaceDir: "agents/support/call_logger"},
-	"offer-summary":          {workspaceDir: "agents/support/offer_summary"},
-	"subsidy-analyzer":       {workspaceDir: "agents/subsidy-analyzer"},
-	"whatsapp-reply":         {workspaceDir: "agents/support/whatsapp_reply"},
-	"whatsapp-agent":         {workspaceDir: "agents/support/whatsapp_agent"},
-	"whatsapp_partner_agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
-	"email-reply":            {workspaceDir: "agents/support/email_reply"},
-	"stale-reengagement":     {workspaceDir: "agents/support/stale-reengagement"},
-}
+// discoveredWorkspaces is populated on first use by walking agents/**/SKILL.md.
+// The cache is invalidated when AGENT_WORKSPACE_ROOT changes.
+var (
+	discoveredWorkspaces     map[string]workspaceDefinition
+	discoveredWorkspacesRoot string
+	discoveredWorkspacesMu   sync.RWMutex
+)
 
 var loggedWorkspaceLoads sync.Map
 
@@ -83,7 +76,12 @@ func LoadAgentWorkspace(agentName string) (Workspace, error) {
 		return Workspace{}, errors.New("agent name is required")
 	}
 
-	definition, ok := workspaceDefinitions[normalizedName]
+	definitions, err := getDiscoveredWorkspaces()
+	if err != nil {
+		return Workspace{}, err
+	}
+
+	definition, ok := definitions[normalizedName]
 	if !ok {
 		return Workspace{}, fmt.Errorf("unsupported agent workspace %q", agentName)
 	}
@@ -97,10 +95,21 @@ func LoadAgentWorkspace(agentName string) (Workspace, error) {
 }
 
 func ValidateAgentWorkspaces(agentNames ...string) error {
+	definitions, err := getDiscoveredWorkspaces()
+	if err != nil {
+		return err
+	}
+
 	names := agentNames
 	if len(names) == 0 {
-		names = make([]string, 0, len(workspaceDefinitions))
-		for name := range workspaceDefinitions {
+		// Deduplicate by workspaceDir so aliases (hyphen/underscore) don't validate twice.
+		seenDirs := make(map[string]struct{}, len(definitions))
+		names = make([]string, 0, len(definitions))
+		for name, def := range definitions {
+			if _, ok := seenDirs[def.workspaceDir]; ok {
+				continue
+			}
+			seenDirs[def.workspaceDir] = struct{}{}
 			names = append(names, name)
 		}
 		sort.Strings(names)
@@ -143,6 +152,149 @@ func MustLoadWorkspaceMarkdownText(relativePath string) string {
 		panic(fmt.Sprintf("read workspace markdown %s: %v", relativePath, err))
 	}
 	return content
+}
+
+// ReadWorkspaceFile loads a file relative to the workspace root.
+// This is the canonical way to read markdown resources from disk.
+func ReadWorkspaceFile(relativePath string) (string, error) {
+	rootDir, err := resolveAgentWorkspaceRoot()
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root for %s: %w", relativePath, err)
+	}
+	return readAgentWorkspaceFile(rootDir, relativePath)
+}
+
+func getDiscoveredWorkspaces() (map[string]workspaceDefinition, error) {
+	rootDir, err := resolveAgentWorkspaceRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	discoveredWorkspacesMu.RLock()
+	if discoveredWorkspaces != nil && discoveredWorkspacesRoot == rootDir {
+		defs := discoveredWorkspaces
+		discoveredWorkspacesMu.RUnlock()
+		return defs, nil
+	}
+	discoveredWorkspacesMu.RUnlock()
+
+	discoveredWorkspacesMu.Lock()
+	defer discoveredWorkspacesMu.Unlock()
+
+	if discoveredWorkspaces != nil && discoveredWorkspacesRoot == rootDir {
+		return discoveredWorkspaces, nil
+	}
+
+	defs, err := discoverAgentWorkspacesFrom(rootDir)
+	if err != nil {
+		return nil, err
+	}
+
+	discoveredWorkspaces = defs
+	discoveredWorkspacesRoot = rootDir
+	return defs, nil
+}
+
+func discoverAgentWorkspacesFrom(rootDir string) (map[string]workspaceDefinition, error) {
+	agentsDir := filepath.Join(rootDir, "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		return nil, fmt.Errorf("discover agent workspaces: read agents dir: %w", err)
+	}
+
+	definitions := make(map[string]workspaceDefinition)
+
+	var walk func(absDir, relDir string) error
+	walk = func(absDir, relDir string) error {
+		dirEntries, readErr := os.ReadDir(absDir)
+		if readErr != nil {
+			return fmt.Errorf("read dir %s: %w", relDir, readErr)
+		}
+
+		hasSkill := false
+		for _, e := range dirEntries {
+			if !e.IsDir() && strings.EqualFold(e.Name(), skillFileName) {
+				hasSkill = true
+				break
+			}
+		}
+
+		if hasSkill {
+			skillPath := filepath.ToSlash(filepath.Join(relDir, skillFileName))
+			skill, loadErr := loadSkillFile(rootDir, skillPath)
+			if loadErr != nil {
+				return fmt.Errorf("discover agent workspaces: load skill %s: %w", skillPath, loadErr)
+			}
+
+			agentName := strings.ToLower(strings.TrimSpace(skill.metadata.Name))
+			if agentName == "" {
+				return fmt.Errorf("discover agent workspaces: skill %s has empty name", skillPath)
+			}
+
+			// Skip the shared workspace — it is not an agent.
+			if agentName != "shared" {
+				def := workspaceDefinition{
+					workspaceDir: relDir,
+					skipPrompts:  skill.metadata.Metadata.SkipPrompts,
+				}
+				if aliasErr := registerWorkspaceAlias(definitions, agentName, def); aliasErr != nil {
+					return aliasErr
+				}
+			}
+		}
+
+		for _, e := range dirEntries {
+			if e.IsDir() {
+				childAbs := filepath.Join(absDir, e.Name())
+				childRel := filepath.Join(relDir, e.Name())
+				if walkErr := walk(childAbs, childRel); walkErr != nil {
+					return walkErr
+				}
+			}
+		}
+
+		return nil
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			if walkErr := walk(filepath.Join(agentsDir, e.Name()), filepath.Join("agents", e.Name())); walkErr != nil {
+				return nil, walkErr
+			}
+		}
+	}
+
+	return definitions, nil
+}
+
+func registerWorkspaceAlias(defs map[string]workspaceDefinition, name string, def workspaceDefinition) error {
+	if err := setWorkspaceDef(defs, name, def); err != nil {
+		return err
+	}
+	canonical := strings.ToLower(strings.TrimSpace(name))
+	if alt := strings.ReplaceAll(canonical, "_", "-"); alt != canonical {
+		if err := setWorkspaceDef(defs, alt, def); err != nil {
+			return err
+		}
+	}
+	if alt := strings.ReplaceAll(canonical, "-", "_"); alt != canonical {
+		if err := setWorkspaceDef(defs, alt, def); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setWorkspaceDef(defs map[string]workspaceDefinition, key string, def workspaceDefinition) error {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if existing, ok := defs[key]; ok {
+		if existing.workspaceDir == def.workspaceDir && existing.skipPrompts == def.skipPrompts {
+			return nil
+		}
+		return fmt.Errorf("workspace alias collision: %q maps to both %s and %s", key, existing.workspaceDir, def.workspaceDir)
+	}
+	defs[key] = def
+	return nil
 }
 
 func loadAgentWorkspaceFromRoot(rootDir, normalizedName string, definition workspaceDefinition) (Workspace, error) {

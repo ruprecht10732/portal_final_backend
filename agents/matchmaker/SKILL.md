@@ -2,6 +2,7 @@
 name: matchmaker
 description: Use when a service is fulfillment-ready and the system needs partner matching, partner-offer creation, or a fulfillment-stage update.
 metadata:
+  skip-prompts: true
   allowed-tools:
     - FindMatchingPartners
     - CreatePartnerOffer

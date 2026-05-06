@@ -37,17 +37,17 @@ const (
 
 const extraNotesLinePrefix = "\n- Extra notes: "
 
-var sharedExecutionContract = mustReadPromptFile("shared/prompts/execution-contract.md")
+var sharedExecutionContract = mustReadPromptFile("agents/shared/prompts/execution-contract.md")
 
-var sharedProductSelectionRules = mustReadPromptFile("shared/prompts/product-selection.md")
+var sharedProductSelectionRules = mustReadPromptFile("agents/shared/prompts/product-selection.md")
 
-var sharedCommunicationContract = mustReadPromptFile("shared/prompts/communication-contract.md")
+var sharedCommunicationContract = mustReadPromptFile("agents/shared/prompts/communication-contract.md")
 
-var sharedGlobalPreamble = mustReadPromptFile("shared/prompts/global-preamble.md")
+var sharedGlobalPreamble = mustReadPromptFile("agents/shared/prompts/global-preamble.md")
 
-var sharedMathExamples = mustReadPromptFile("shared/prompts/math-examples.md")
+var sharedMathExamples = mustReadPromptFile("agents/shared/prompts/math-examples.md")
 
-var sharedIntakeCompletenessGate = mustReadPromptFile("shared/prompts/intake-completeness-gate.md")
+var sharedIntakeCompletenessGate = mustReadPromptFile("agents/shared/prompts/intake-completeness-gate.md")
 
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
@@ -95,7 +95,7 @@ type gatekeeperPromptTemplateData struct {
 	EstimationContextSummary  string
 }
 
-var gatekeeperPromptTemplate = mustLoadPromptTemplateWithPreamble("gatekeeper", "gatekeeper/prompts/base.md")
+var gatekeeperPromptTemplate = mustLoadPromptTemplateWithPreamble("gatekeeper", "agents/gatekeeper/prompts/base.md")
 
 func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	notesSection := buildNotesSection(input.notes, maxGatekeeperNotesChars)

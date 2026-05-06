@@ -203,8 +203,8 @@ func TestLoadAgentContextMissingFile(t *testing.T) {
 	}
 
 	_, err := orchestration.LoadAgentWorkspace("gatekeeper")
-	if err == nil || !strings.Contains(err.Error(), "agents/gatekeeper/SKILL.md") {
-		t.Fatalf("expected missing SKILL.md error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported agent workspace") {
+		t.Fatalf("expected unsupported agent workspace error, got %v", err)
 	}
 }
 
@@ -310,7 +310,7 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/shared/product-selection.md":                       "shared product selection",
 		"agents/shared/communication-rules.md":                     "shared communication rules",
 		"agents/shared/z-shared.md":                                "z shared file",
-		"agents/gatekeeper/SKILL.md":                               "---\nname: gatekeeper\ndescription: Use when a lead or service needs intake validation before pipeline progression.\nmetadata:\n  allowed-tools:\n    - SaveAnalysis\n    - UpdateLeadDetails\n    - UpdateLeadServiceType\n    - UpdatePipelineStage\n---\n\n# Gatekeeper",
+		"agents/gatekeeper/SKILL.md":                               "---\nname: gatekeeper\ndescription: Use when a lead or service needs intake validation before pipeline progression.\nmetadata:\n  skip-prompts: true\n  allowed-tools:\n    - SaveAnalysis\n    - UpdateLeadDetails\n    - UpdateLeadServiceType\n    - UpdatePipelineStage\n---\n\n# Gatekeeper",
 		"agents/gatekeeper/context.md":                             gatekeeperContextText,
 		"agents/gatekeeper/skills/a-skill.md":                      "a skill file",
 		"agents/gatekeeper/skills/save_analysis.md":                "save analysis skill",
@@ -323,7 +323,7 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/qualifier/context.md":                              "qualifier context",
 		"agents/qualifier/skills/ask_customer_clarification.md":    "ask customer clarification skill",
 		"agents/qualifier/skills/save_analysis.md":                 "qualifier save analysis skill",
-		"agents/calculator/SKILL.md":                               "---\nname: calculator\ndescription: Use when a service must be scoped, estimated, or quoted.\nmetadata:\n  allowed-tools:\n    - Calculator\n    - CalculateEstimate\n    - SearchProductMaterials\n    - ListCatalogGaps\n    - DraftQuote\n    - SaveEstimation\n    - SubmitQuoteCritique\n    - CommitScopeArtifact\n    - AskCustomerClarification\n    - UpdatePipelineStage\n---\n\n# Calculator",
+		"agents/calculator/SKILL.md":                               "---\nname: calculator\ndescription: Use when a service must be scoped, estimated, or quoted.\nmetadata:\n  skip-prompts: true\n  allowed-tools:\n    - Calculator\n    - CalculateEstimate\n    - SearchProductMaterials\n    - ListCatalogGaps\n    - DraftQuote\n    - SaveEstimation\n    - SubmitQuoteCritique\n    - CommitScopeArtifact\n    - AskCustomerClarification\n    - UpdatePipelineStage\n---\n\n# Calculator",
 		"agents/calculator/context.md":                             "calculator context",
 		"agents/calculator/skills/calculator.md":                   "calculator skill",
 		"agents/calculator/skills/calculate_estimate.md":           "calculate estimate skill",
@@ -334,7 +334,7 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/calculator/skills/submit_quote_critique.md":        "submit quote critique skill",
 		"agents/calculator/skills/commit_scope_artifact.md":        "commit scope artifact skill",
 		"agents/calculator/prompts/scope_analyzer.md":              "calculator prompt scope analyzer (should be excluded)",
-		"agents/matchmaker/SKILL.md":                               "---\nname: matchmaker\ndescription: Use when a fulfillment-ready service needs partner routing.\nmetadata:\n  allowed-tools:\n    - FindMatchingPartners\n    - CreatePartnerOffer\n    - UpdatePipelineStage\n---\n\n# Matchmaker",
+		"agents/matchmaker/SKILL.md":                               "---\nname: matchmaker\ndescription: Use when a fulfillment-ready service needs partner routing.\nmetadata:\n  skip-prompts: true\n  allowed-tools:\n    - FindMatchingPartners\n    - CreatePartnerOffer\n    - UpdatePipelineStage\n---\n\n# Matchmaker",
 		"agents/matchmaker/context.md":                             "matchmaker context",
 		"agents/matchmaker/skills/find_matching_partners.md":       "find matching partners skill",
 		"agents/matchmaker/skills/create_partner_offer.md":         "create partner offer skill",

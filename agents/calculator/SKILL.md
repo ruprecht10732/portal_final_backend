@@ -2,6 +2,7 @@
 name: calculator
 description: Use when a service is in estimation or quote generation and the system must scope work, search materials, calculate prices, draft quotes, critique quote quality, or persist structured estimation artifacts.
 metadata:
+  skip-prompts: true
   allowed-tools:
     - Calculator
     - CalculateEstimate

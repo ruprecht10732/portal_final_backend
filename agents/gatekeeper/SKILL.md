@@ -2,6 +2,7 @@
 name: gatekeeper
 description: Use when a lead or service needs intake validation, service-type correction, lead-detail correction, or a pipeline-stage decision before estimation or manual intervention.
 metadata:
+  skip-prompts: true
   allowed-tools:
     - SaveAnalysis
     - UpdateLeadDetails

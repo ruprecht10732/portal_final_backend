@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"text/template"
 
-	"portal_final_backend/agents"
+	"portal_final_backend/internal/orchestration"
 )
 
 func mustReadPromptFile(path string) string {
-	body, err := agents.ReadPromptFile(path)
+	body, err := orchestration.ReadWorkspaceFile(path)
 	if err != nil {
 		panic(fmt.Sprintf("load prompt file %s: %v", path, err))
 	}
@@ -17,7 +17,7 @@ func mustReadPromptFile(path string) string {
 }
 
 func mustLoadPromptTemplate(name, path string) *template.Template {
-	body, err := agents.ReadPromptFile(path)
+	body, err := orchestration.ReadWorkspaceFile(path)
 	if err != nil {
 		panic(fmt.Sprintf("load prompt template %s: %v", path, err))
 	}
@@ -25,7 +25,7 @@ func mustLoadPromptTemplate(name, path string) *template.Template {
 }
 
 func mustLoadPromptTemplateWithPreamble(name, path string) *template.Template {
-	body, err := agents.ReadPromptFile(path)
+	body, err := orchestration.ReadWorkspaceFile(path)
 	if err != nil {
 		panic(fmt.Sprintf("load prompt template %s: %v", path, err))
 	}
@@ -42,18 +42,18 @@ func renderPromptTemplate(tmpl *template.Template, data any) string {
 	return buf.String()
 }
 
-var scopeAnalyzerPromptTemplate = mustLoadPromptTemplate("scope-analyzer", "calculator/prompts/scope_analyzer.md")
+var scopeAnalyzerPromptTemplate = mustLoadPromptTemplate("scope-analyzer", "agents/calculator/prompts/scope_analyzer.md")
 
-var quoteBuilderPromptTemplate = mustLoadPromptTemplate("quote-builder", "calculator/prompts/quote_builder.md")
+var quoteBuilderPromptTemplate = mustLoadPromptTemplate("quote-builder", "agents/calculator/prompts/quote_builder.md")
 
-var investigativePromptTemplate = mustLoadPromptTemplate("investigative", "calculator/prompts/investigative.md")
+var investigativePromptTemplate = mustLoadPromptTemplate("investigative", "agents/calculator/prompts/investigative.md")
 
-var dispatcherPromptTemplate = mustLoadPromptTemplate("dispatcher", "matchmaker/prompts/base.md")
+var dispatcherPromptTemplate = mustLoadPromptTemplate("dispatcher", "agents/matchmaker/prompts/base.md")
 
-var quoteGeneratePromptTemplate = mustLoadPromptTemplate("quote-generate", "calculator/prompts/quote_generate.md")
+var quoteGeneratePromptTemplate = mustLoadPromptTemplate("quote-generate", "agents/calculator/prompts/quote_generate.md")
 
-var quoteCriticPromptTemplate = mustLoadPromptTemplate("quote-critic", "calculator/prompts/quote_critic.md")
+var quoteCriticPromptTemplate = mustLoadPromptTemplate("quote-critic", "agents/calculator/prompts/quote_critic.md")
 
-var quoteRepairPromptTemplate = mustLoadPromptTemplate("quote-repair", "calculator/prompts/quote_repair.md")
+var quoteRepairPromptTemplate = mustLoadPromptTemplate("quote-repair", "agents/calculator/prompts/quote_repair.md")
 
 

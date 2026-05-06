@@ -53,4 +53,6 @@ When adding or changing an agent workspace:
 5. Update `shared/glossary.md` if you introduce new workflow terms.
 6. Update `shared/tool-reference.md` if tool contracts change.
 7. Update `../docs/agent-runtime-flow.md` if the trigger graph changes.
-8. Register new workspace directories in `internal/orchestration/workspace.go` and keep `allowed-tools` aligned with `internal/tools/domain_tools.go`.
+8. Keep `allowed-tools` aligned with `internal/tools/domain_tools.go`.
+
+> **Note:** Workspaces are auto-discovered from `agents/**/SKILL.md`. No Go registration is required.
