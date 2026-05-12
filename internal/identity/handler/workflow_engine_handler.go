@@ -136,9 +136,13 @@ func (h *Handler) ReplaceWorkflowAssignmentRules(c *gin.Context) {
 			return
 		}
 
+		enabled := true
+		if rule.Enabled != nil {
+			enabled = *rule.Enabled
+		}
 		upsert := repository.WorkflowAssignmentRuleUpsert{
 			Name:            rule.Name,
-			Enabled:         rule.Enabled,
+			Enabled:         enabled,
 			Priority:        rule.Priority,
 			WorkflowID:      workflowID,
 			LeadSource:      rule.LeadSource,
@@ -416,11 +420,15 @@ func mapWorkflowStepResponse(step repository.WorkflowStep) transport.WorkflowSte
 }
 
 func mapWorkflowUpsertRequest(req transport.UpsertWorkflowRequest) (repository.WorkflowUpsert, error) {
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
 	upsert := repository.WorkflowUpsert{
 		WorkflowKey:              req.WorkflowKey,
 		Name:                     req.Name,
 		Description:              req.Description,
-		Enabled:                  req.Enabled,
+		Enabled:                  enabled,
 		QuoteValidDaysOverride:   req.QuoteValidDaysOverride,
 		QuotePaymentDaysOverride: req.QuotePaymentDaysOverride,
 		Steps:                    make([]repository.WorkflowStepUpsert, 0, len(req.Steps)),

@@ -238,6 +238,11 @@ func (s *Service) ListWorkflows(ctx context.Context, organizationID uuid.UUID) (
 }
 
 func (s *Service) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID, workflows []repository.WorkflowUpsert) ([]repository.Workflow, error) {
+	for _, wf := range workflows {
+		if len(wf.Steps) == 0 {
+			return nil, apperr.Validation("workflow steps cannot be empty")
+		}
+	}
 	normalized := normalizeWorkflowUpserts(workflows)
 	return s.repo.ReplaceWorkflows(ctx, organizationID, normalized)
 }
@@ -319,10 +324,9 @@ func (s *Service) ResolveLeadWorkflow(ctx context.Context, input ResolveLeadWork
 		if matched {
 			return result, nil
 		}
-		return ResolveLeadWorkflowResult{
-			ResolutionSource: "manual_override",
-			OverrideMode:     &override.OverrideMode,
-		}, nil
+		// Override exists but doesn't point to a valid workflow (e.g. cleared
+		// or workflow was deleted/disabled). Fall through to assignment rules
+		// instead of permanently blocking dispatch.
 	}
 
 	rules, err := s.repo.ListWorkflowAssignmentRules(ctx, input.OrganizationID)
