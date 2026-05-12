@@ -215,17 +215,17 @@ func TestResolveWhatsAppMessageDeviceIDPrefersNonJIDOverride(t *testing.T) {
 	}
 }
 
-func TestResolveWhatsAppMessageDeviceIDIgnoresJIDOverride(t *testing.T) {
+func TestResolveWhatsAppMessageDeviceIDUsesJIDOverride(t *testing.T) {
 	t.Parallel()
 
 	raw := json.RawMessage(`{"device_id":"31686388589@s.whatsapp.net"}`)
 
 	deviceID, source := resolveWhatsAppMessageDeviceID(raw, "org_fallback")
-	if deviceID != "org_fallback" {
-		t.Fatalf("expected fallback device id when metadata contains jid, got %q", deviceID)
+	if deviceID != "31686388589@s.whatsapp.net" {
+		t.Fatalf("expected metadata device id to be used even when it contains @, got %q", deviceID)
 	}
-	if source != "message_metadata_ignored_jid" {
-		t.Fatalf("expected message_metadata_ignored_jid source, got %q", source)
+	if source != "message_metadata" {
+		t.Fatalf("expected message_metadata source, got %q", source)
 	}
 }
 

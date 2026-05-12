@@ -29,7 +29,7 @@ const (
 	autocompleteMaxResults       = 10
 	autocompletePrimaryMax       = 3
 	autocompleteQdrantMinResults = 6
-	autocompleteQdrantTimeout    = 3500 * time.Millisecond
+	autocompleteQdrantTimeout    = 8000 * time.Millisecond
 	autocompleteScoreThreshold   = 0.30
 	autocompleteSourceCatalog    = "catalog"
 	autocompleteSourceRef        = "reference"

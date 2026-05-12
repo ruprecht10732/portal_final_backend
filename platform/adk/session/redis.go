@@ -240,8 +240,13 @@ func (r *RedisService) AppendEvent(ctx context.Context, s session.Session, event
 	if event == nil {
 		return nil
 	}
+	// Use an uncancelled context for Redis I/O so that a runner budget
+	// cancellation (fired after UpdatePipelineStage or tool-call limit)
+	// does not poison the final session persistence operations.
+	persistCtx := context.WithoutCancel(ctx)
+
 	key := r.sessionKey(s.AppName(), s.UserID(), s.ID())
-	data, err := r.client.Get(ctx, key).Bytes()
+	data, err := r.client.Get(persistCtx, key).Bytes()
 	if err == redis.Nil {
 		return fmt.Errorf("redis session: cannot append to missing session")
 	}
@@ -273,7 +278,7 @@ func (r *RedisService) AppendEvent(ctx context.Context, s session.Session, event
 		return fmt.Errorf("redis session: append marshal: %w", err)
 	}
 
-	if err := r.client.Set(ctx, key, updated, r.ttl).Err(); err != nil {
+	if err := r.client.Set(persistCtx, key, updated, r.ttl).Err(); err != nil {
 		return fmt.Errorf("redis session: append set: %w", err)
 	}
 

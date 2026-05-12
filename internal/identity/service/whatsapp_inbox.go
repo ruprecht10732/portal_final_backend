@@ -1654,9 +1654,11 @@ func resolveWhatsAppMessageDeviceID(raw json.RawMessage, fallback string) (strin
 	if override == "" {
 		return trimmedFallback, "organization_settings"
 	}
-	if strings.Contains(override, "@") {
-		return trimmedFallback, "message_metadata_ignored_jid"
-	}
+	// Use the device_id stored in the message metadata (sent by the webhook)
+	// as the authoritative device. Some webhook payloads include a JID-like
+	// identifier here when the message was received on a different linked
+	// device; falling back to the org's current device causes "message does
+	// not belong to chat" errors because the org device never saw the chat.
 	return override, "message_metadata"
 }
 
