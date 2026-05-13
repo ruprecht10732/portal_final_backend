@@ -14,15 +14,18 @@ type Querier interface {
 	AddMember(ctx context.Context, arg AddMemberParams) error
 	ClearOrganizationLogo(ctx context.Context, id pgtype.UUID) (ClearOrganizationLogoRow, error)
 	ClearOrganizationSMTP(ctx context.Context, organizationID pgtype.UUID) error
+	CountWorkflowSteps(ctx context.Context, arg CountWorkflowStepsParams) (int64, error)
 	CreateDefaultWorkflowAssignmentRule(ctx context.Context, arg CreateDefaultWorkflowAssignmentRuleParams) error
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (RacOrganizationInvite, error)
 	// Identity Domain SQL Queries
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (CreateOrganizationRow, error)
 	CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWhatsAppReplyFeedbackParams) (CreateWhatsAppReplyFeedbackRow, error)
 	CreateWorkflowAssignmentRule(ctx context.Context, arg CreateWorkflowAssignmentRuleParams) error
+	CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStepParams) (pgtype.UUID, error)
 	DefaultWorkflowAssignmentRuleExists(ctx context.Context, organizationID pgtype.UUID) (bool, error)
 	DeleteLeadWorkflowOverride(ctx context.Context, arg DeleteLeadWorkflowOverrideParams) error
 	DeleteWorkflowAssignmentRulesByOrganization(ctx context.Context, organizationID pgtype.UUID) error
+	DeleteWorkflowStep(ctx context.Context, arg DeleteWorkflowStepParams) error
 	DeleteWorkflowStepsByWorkflow(ctx context.Context, arg DeleteWorkflowStepsByWorkflowParams) error
 	DeleteWorkflowStepsNotInList(ctx context.Context, arg DeleteWorkflowStepsNotInListParams) error
 	DeleteWorkflowsByOrganization(ctx context.Context, organizationID pgtype.UUID) error
@@ -32,6 +35,7 @@ type Querier interface {
 	GetOrganization(ctx context.Context, id pgtype.UUID) (GetOrganizationRow, error)
 	GetOrganizationSettings(ctx context.Context, organizationID pgtype.UUID) (GetOrganizationSettingsRow, error)
 	GetUserOrganizationID(ctx context.Context, userID pgtype.UUID) (pgtype.UUID, error)
+	GetWorkflowStep(ctx context.Context, arg GetWorkflowStepParams) (RacWorkflowStep, error)
 	LeadExistsInOrganization(ctx context.Context, arg LeadExistsInOrganizationParams) (bool, error)
 	ListInvites(ctx context.Context, organizationID pgtype.UUID) ([]RacOrganizationInvite, error)
 	ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, arg ListRecentAppliedWhatsAppReplyFeedbackParams) ([]ListRecentAppliedWhatsAppReplyFeedbackRow, error)
@@ -42,6 +46,7 @@ type Querier interface {
 	UpdateInvite(ctx context.Context, arg UpdateInviteParams) (RacOrganizationInvite, error)
 	UpdateOrganizationLogo(ctx context.Context, arg UpdateOrganizationLogoParams) (UpdateOrganizationLogoRow, error)
 	UpdateOrganizationProfile(ctx context.Context, arg UpdateOrganizationProfileParams) (UpdateOrganizationProfileRow, error)
+	UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (pgtype.UUID, error)
 	UpsertLeadWorkflowOverride(ctx context.Context, arg UpsertLeadWorkflowOverrideParams) (RacLeadWorkflowOverride, error)
 	UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganizationSMTPParams) (UpsertOrganizationSMTPRow, error)
 	UpsertOrganizationSettings(ctx context.Context, arg UpsertOrganizationSettingsParams) (UpsertOrganizationSettingsRow, error)

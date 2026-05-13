@@ -99,6 +99,24 @@ func (q *Queries) ClearOrganizationSMTP(ctx context.Context, organizationID pgty
 	return err
 }
 
+const countWorkflowSteps = `-- name: CountWorkflowSteps :one
+SELECT COUNT(*) AS count
+FROM RAC_workflow_steps
+WHERE workflow_id = $1 AND organization_id = $2
+`
+
+type CountWorkflowStepsParams struct {
+	WorkflowID     pgtype.UUID `json:"workflow_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) CountWorkflowSteps(ctx context.Context, arg CountWorkflowStepsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkflowSteps, arg.WorkflowID, arg.OrganizationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDefaultWorkflowAssignmentRule = `-- name: CreateDefaultWorkflowAssignmentRule :exec
 INSERT INTO RAC_workflow_assignment_rules (
   organization_id,
@@ -333,6 +351,55 @@ func (q *Queries) CreateWorkflowAssignmentRule(ctx context.Context, arg CreateWo
 	return err
 }
 
+const createWorkflowStep = `-- name: CreateWorkflowStep :one
+INSERT INTO RAC_workflow_steps (
+  id, organization_id, workflow_id, trigger, channel, audience, action,
+  step_order, delay_minutes, enabled, recipient_config, template_subject,
+  template_body, stop_on_reply
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+RETURNING id
+`
+
+type CreateWorkflowStepParams struct {
+	ID              pgtype.UUID `json:"id"`
+	OrganizationID  pgtype.UUID `json:"organization_id"`
+	WorkflowID      pgtype.UUID `json:"workflow_id"`
+	Trigger         string      `json:"trigger"`
+	Channel         string      `json:"channel"`
+	Audience        string      `json:"audience"`
+	Action          string      `json:"action"`
+	StepOrder       int32       `json:"step_order"`
+	DelayMinutes    int32       `json:"delay_minutes"`
+	Enabled         bool        `json:"enabled"`
+	Column11        []byte      `json:"column_11"`
+	TemplateSubject pgtype.Text `json:"template_subject"`
+	TemplateBody    pgtype.Text `json:"template_body"`
+	StopOnReply     bool        `json:"stop_on_reply"`
+}
+
+func (q *Queries) CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStepParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, createWorkflowStep,
+		arg.ID,
+		arg.OrganizationID,
+		arg.WorkflowID,
+		arg.Trigger,
+		arg.Channel,
+		arg.Audience,
+		arg.Action,
+		arg.StepOrder,
+		arg.DelayMinutes,
+		arg.Enabled,
+		arg.Column11,
+		arg.TemplateSubject,
+		arg.TemplateBody,
+		arg.StopOnReply,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const defaultWorkflowAssignmentRuleExists = `-- name: DefaultWorkflowAssignmentRuleExists :one
 SELECT EXISTS (
   SELECT 1
@@ -373,6 +440,22 @@ WHERE organization_id = $1
 
 func (q *Queries) DeleteWorkflowAssignmentRulesByOrganization(ctx context.Context, organizationID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkflowAssignmentRulesByOrganization, organizationID)
+	return err
+}
+
+const deleteWorkflowStep = `-- name: DeleteWorkflowStep :exec
+DELETE FROM RAC_workflow_steps
+WHERE id = $1 AND organization_id = $2 AND workflow_id = $3
+`
+
+type DeleteWorkflowStepParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	WorkflowID     pgtype.UUID `json:"workflow_id"`
+}
+
+func (q *Queries) DeleteWorkflowStep(ctx context.Context, arg DeleteWorkflowStepParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowStep, arg.ID, arg.OrganizationID, arg.WorkflowID)
 	return err
 }
 
@@ -632,6 +715,44 @@ func (q *Queries) GetUserOrganizationID(ctx context.Context, userID pgtype.UUID)
 	var organization_id pgtype.UUID
 	err := row.Scan(&organization_id)
 	return organization_id, err
+}
+
+const getWorkflowStep = `-- name: GetWorkflowStep :one
+SELECT id, organization_id, workflow_id, trigger, channel, audience, action,
+  step_order, delay_minutes, enabled, recipient_config, template_subject,
+  template_body, stop_on_reply, created_at, updated_at
+FROM RAC_workflow_steps
+WHERE id = $1 AND organization_id = $2 AND workflow_id = $3
+`
+
+type GetWorkflowStepParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	WorkflowID     pgtype.UUID `json:"workflow_id"`
+}
+
+func (q *Queries) GetWorkflowStep(ctx context.Context, arg GetWorkflowStepParams) (RacWorkflowStep, error) {
+	row := q.db.QueryRow(ctx, getWorkflowStep, arg.ID, arg.OrganizationID, arg.WorkflowID)
+	var i RacWorkflowStep
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.WorkflowID,
+		&i.Trigger,
+		&i.Channel,
+		&i.Audience,
+		&i.Action,
+		&i.StepOrder,
+		&i.DelayMinutes,
+		&i.Enabled,
+		&i.RecipientConfig,
+		&i.TemplateSubject,
+		&i.TemplateBody,
+		&i.StopOnReply,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const leadExistsInOrganization = `-- name: LeadExistsInOrganization :one
@@ -1151,6 +1272,66 @@ func (q *Queries) UpdateOrganizationProfile(ctx context.Context, arg UpdateOrgan
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateWorkflowStep = `-- name: UpdateWorkflowStep :one
+UPDATE RAC_workflow_steps
+SET
+  trigger = $4,
+  channel = $5,
+  audience = $6,
+  action = $7,
+  step_order = $8,
+  delay_minutes = $9,
+  enabled = $10,
+  recipient_config = $11::jsonb,
+  template_subject = $12,
+  template_body = $13,
+  stop_on_reply = $14,
+  updated_at = now()
+WHERE id = $1
+  AND organization_id = $2
+  AND workflow_id = $3
+RETURNING id
+`
+
+type UpdateWorkflowStepParams struct {
+	ID              pgtype.UUID `json:"id"`
+	OrganizationID  pgtype.UUID `json:"organization_id"`
+	WorkflowID      pgtype.UUID `json:"workflow_id"`
+	Trigger         string      `json:"trigger"`
+	Channel         string      `json:"channel"`
+	Audience        string      `json:"audience"`
+	Action          string      `json:"action"`
+	StepOrder       int32       `json:"step_order"`
+	DelayMinutes    int32       `json:"delay_minutes"`
+	Enabled         bool        `json:"enabled"`
+	Column11        []byte      `json:"column_11"`
+	TemplateSubject pgtype.Text `json:"template_subject"`
+	TemplateBody    pgtype.Text `json:"template_body"`
+	StopOnReply     bool        `json:"stop_on_reply"`
+}
+
+func (q *Queries) UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, updateWorkflowStep,
+		arg.ID,
+		arg.OrganizationID,
+		arg.WorkflowID,
+		arg.Trigger,
+		arg.Channel,
+		arg.Audience,
+		arg.Action,
+		arg.StepOrder,
+		arg.DelayMinutes,
+		arg.Enabled,
+		arg.Column11,
+		arg.TemplateSubject,
+		arg.TemplateBody,
+		arg.StopOnReply,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const upsertLeadWorkflowOverride = `-- name: UpsertLeadWorkflowOverride :one

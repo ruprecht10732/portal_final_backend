@@ -435,3 +435,48 @@ SELECT EXISTS (
   FROM RAC_workflows
   WHERE id = $1 AND organization_id = $2
 ) AS exists;
+
+-- name: CreateWorkflowStep :one
+INSERT INTO RAC_workflow_steps (
+  id, organization_id, workflow_id, trigger, channel, audience, action,
+  step_order, delay_minutes, enabled, recipient_config, template_subject,
+  template_body, stop_on_reply
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+RETURNING id;
+
+-- name: UpdateWorkflowStep :one
+UPDATE RAC_workflow_steps
+SET
+  trigger = $4,
+  channel = $5,
+  audience = $6,
+  action = $7,
+  step_order = $8,
+  delay_minutes = $9,
+  enabled = $10,
+  recipient_config = $11::jsonb,
+  template_subject = $12,
+  template_body = $13,
+  stop_on_reply = $14,
+  updated_at = now()
+WHERE id = $1
+  AND organization_id = $2
+  AND workflow_id = $3
+RETURNING id;
+
+-- name: DeleteWorkflowStep :exec
+DELETE FROM RAC_workflow_steps
+WHERE id = $1 AND organization_id = $2 AND workflow_id = $3;
+
+-- name: GetWorkflowStep :one
+SELECT id, organization_id, workflow_id, trigger, channel, audience, action,
+  step_order, delay_minutes, enabled, recipient_config, template_subject,
+  template_body, stop_on_reply, created_at, updated_at
+FROM RAC_workflow_steps
+WHERE id = $1 AND organization_id = $2 AND workflow_id = $3;
+
+-- name: CountWorkflowSteps :one
+SELECT COUNT(*) AS count
+FROM RAC_workflow_steps
+WHERE workflow_id = $1 AND organization_id = $2;

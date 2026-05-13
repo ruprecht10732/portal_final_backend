@@ -253,6 +253,22 @@ func normalizeWorkflowUpserts(workflows []repository.WorkflowUpsert) []repositor
 	return normalized
 }
 
+func (s *Service) CreateWorkflowStep(ctx context.Context, organizationID, workflowID uuid.UUID, step repository.WorkflowStepUpsert) (repository.WorkflowStep, error) {
+	return s.repo.CreateWorkflowStep(ctx, organizationID, workflowID, step)
+}
+
+func (s *Service) UpdateWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID, step repository.WorkflowStepUpsert) (repository.WorkflowStep, error) {
+	return s.repo.UpdateWorkflowStep(ctx, organizationID, workflowID, stepID, step)
+}
+
+func (s *Service) DeleteWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID) error {
+	return s.repo.DeleteWorkflowStep(ctx, organizationID, workflowID, stepID)
+}
+
+func (s *Service) GetWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID) (repository.WorkflowStep, error) {
+	return s.repo.GetWorkflowStep(ctx, organizationID, workflowID, stepID)
+}
+
 func (s *Service) ListWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID) ([]repository.WorkflowAssignmentRule, error) {
 	return s.repo.ListWorkflowAssignmentRules(ctx, organizationID)
 }

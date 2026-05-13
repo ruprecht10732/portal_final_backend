@@ -338,6 +338,171 @@ func (h *Handler) ResolveLeadWorkflow(c *gin.Context) {
 	httpkit.OK(c, resp)
 }
 
+func (h *Handler) CreateWorkflowStep(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+
+	var req transport.CreateWorkflowStepRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	stepUpsert := mapCreateWorkflowStepRequest(req)
+	step, err := h.svc.CreateWorkflowStep(c.Request.Context(), *tenantID, workflowID, stepUpsert)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapWorkflowStepResponse(step))
+}
+
+func (h *Handler) UpdateWorkflowStep(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+	stepID, err := uuid.Parse(c.Param("stepID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid stepId")
+		return
+	}
+
+	var req transport.UpdateWorkflowStepRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	stepUpsert := mapUpdateWorkflowStepRequest(req)
+	step, err := h.svc.UpdateWorkflowStep(c.Request.Context(), *tenantID, workflowID, stepID, stepUpsert)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapWorkflowStepResponse(step))
+}
+
+func (h *Handler) DeleteWorkflowStep(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+	stepID, err := uuid.Parse(c.Param("stepID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid stepId")
+		return
+	}
+
+	if err := h.svc.DeleteWorkflowStep(c.Request.Context(), *tenantID, workflowID, stepID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "deleted"})
+}
+
+func mapCreateWorkflowStepRequest(req transport.CreateWorkflowStepRequest) repository.WorkflowStepUpsert {
+	return repository.WorkflowStepUpsert{
+		Trigger:         req.Trigger,
+		Channel:         req.Channel,
+		Audience:        req.Audience,
+		Action:          req.Action,
+		StepOrder:       req.StepOrder,
+		DelayMinutes:    req.DelayMinutes,
+		Enabled:         req.Enabled,
+		RecipientConfig: mapRecipientConfig(req.RecipientConfig),
+		TemplateSubject: req.TemplateSubject,
+		TemplateBody:    req.TemplateBody,
+		StopOnReply:     req.StopOnReply,
+	}
+}
+
+func mapUpdateWorkflowStepRequest(req transport.UpdateWorkflowStepRequest) repository.WorkflowStepUpsert {
+	return repository.WorkflowStepUpsert{
+		Trigger:         req.Trigger,
+		Channel:         req.Channel,
+		Audience:        req.Audience,
+		Action:          req.Action,
+		StepOrder:       req.StepOrder,
+		DelayMinutes:    req.DelayMinutes,
+		Enabled:         req.Enabled,
+		RecipientConfig: mapRecipientConfig(req.RecipientConfig),
+		TemplateSubject: req.TemplateSubject,
+		TemplateBody:    req.TemplateBody,
+		StopOnReply:     req.StopOnReply,
+	}
+}
+
+func mapRecipientConfig(req transport.WorkflowStepRecipientConfig) map[string]any {
+	cfg := map[string]any{}
+	if req.Audience != "" {
+		cfg["audience"] = req.Audience
+	}
+	cfg["includeAssignedAgent"] = req.IncludeAssignedAgent
+	cfg["includeLeadContact"] = req.IncludeLeadContact
+	cfg["includePartner"] = req.IncludePartner
+	cfg["includeInternal"] = req.IncludeInternal
+	if len(req.CustomEmails) > 0 {
+		cfg["customEmails"] = req.CustomEmails
+	}
+	if len(req.CustomPhones) > 0 {
+		cfg["customPhones"] = req.CustomPhones
+	}
+	return cfg
+}
+
 func (h *Handler) requireTenantID(c *gin.Context) (uuid.UUID, bool) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {

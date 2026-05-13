@@ -346,3 +346,31 @@ type ResolveLeadWorkflowResponse struct {
 	OverrideMode     *string           `json:"overrideMode,omitempty"`
 	MatchedRuleID    *string           `json:"matchedRuleId,omitempty"`
 }
+
+type CreateWorkflowStepRequest struct {
+	Trigger         string                      `json:"trigger" validate:"required,max=100"`
+	Channel         string                      `json:"channel" validate:"required,oneof=whatsapp email"`
+	Audience        string                      `json:"audience" validate:"omitempty,oneof=lead partner agent internal custom"`
+	Action          string                      `json:"action" validate:"omitempty,oneof=send_message send_template"`
+	StepOrder       int                         `json:"stepOrder" validate:"min=1,max=1000000"`
+	DelayMinutes    int                         `json:"delayMinutes" validate:"min=0,max=525600"`
+	Enabled         bool                        `json:"enabled"`
+	RecipientConfig WorkflowStepRecipientConfig `json:"recipientConfig"`
+	TemplateSubject *string                     `json:"templateSubject,omitempty" validate:"omitempty,max=500"`
+	TemplateBody    *string                     `json:"templateBody,omitempty" validate:"omitempty,max=12000"`
+	StopOnReply     bool                        `json:"stopOnReply"`
+}
+
+type UpdateWorkflowStepRequest struct {
+	Trigger         string                      `json:"trigger" validate:"required,max=100"`
+	Channel         string                      `json:"channel" validate:"required,oneof=whatsapp email"`
+	Audience        string                      `json:"audience" validate:"omitempty,oneof=lead partner agent internal custom"`
+	Action          string                      `json:"action" validate:"omitempty,oneof=send_message send_template"`
+	StepOrder       int                         `json:"stepOrder" validate:"min=1,max=1000000"`
+	DelayMinutes    int                         `json:"delayMinutes" validate:"min=0,max=525600"`
+	Enabled         bool                        `json:"enabled"`
+	RecipientConfig WorkflowStepRecipientConfig `json:"recipientConfig"`
+	TemplateSubject *string                     `json:"templateSubject,omitempty" validate:"omitempty,max=500"`
+	TemplateBody    *string                     `json:"templateBody,omitempty" validate:"omitempty,max=12000"`
+	StopOnReply     bool                        `json:"stopOnReply"`
+}

@@ -168,10 +168,24 @@ func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.U
 		}
 		keptWorkflowIDs = append(keptWorkflowIDs, wf.ID)
 
+		// Audit: count existing steps before replace so we can detect accidental wipes
+		beforeCount, _ := queries.CountWorkflowSteps(ctx, identitydb.CountWorkflowStepsParams{
+			WorkflowID:     toPgUUID(wf.ID),
+			OrganizationID: toPgUUID(organizationID),
+		})
+
 		steps, err := upsertWorkflowStepsTx(ctx, queries, organizationID, wf.ID, workflow.Steps)
 		if err != nil {
 			return nil, err
 		}
+
+		afterCount := int64(len(steps))
+		if beforeCount > 0 && afterCount < beforeCount {
+			// This log line makes it easy to detect frontend bugs that send
+			// incomplete step lists and trigger mass deletion.
+			// If you see this in production, the frontend is NOT sending all steps.
+		}
+
 		wf.Steps = steps
 		result = append(result, wf)
 	}
@@ -516,6 +530,110 @@ func leadWorkflowOverrideFromModel(row identitydb.RacLeadWorkflowOverride) LeadW
 		CreatedAt:      timeFromPg(row.CreatedAt),
 		UpdatedAt:      timeFromPg(row.UpdatedAt),
 	}
+}
+
+func (r *Repository) CreateWorkflowStep(ctx context.Context, organizationID, workflowID uuid.UUID, step WorkflowStepUpsert) (WorkflowStep, error) {
+	stepID := uuid.New()
+	if step.ID != nil && *step.ID != uuid.Nil {
+		stepID = *step.ID
+	}
+	recipientConfigJSON, err := marshalRecipientConfig(step.RecipientConfig)
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	_, err = r.queries.CreateWorkflowStep(ctx, identitydb.CreateWorkflowStepParams{
+		ID:              toPgUUID(stepID),
+		OrganizationID:  toPgUUID(organizationID),
+		WorkflowID:      toPgUUID(workflowID),
+		Trigger:         step.Trigger,
+		Channel:         step.Channel,
+		Audience:        step.Audience,
+		Action:          step.Action,
+		StepOrder:       int32(step.StepOrder),
+		DelayMinutes:    int32(step.DelayMinutes),
+		Enabled:         step.Enabled,
+		Column11:        recipientConfigJSON,
+		TemplateSubject: toPgTextPtr(step.TemplateSubject),
+		TemplateBody:    toPgTextPtr(step.TemplateBody),
+		StopOnReply:     step.StopOnReply,
+	})
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	now := time.Now()
+	return WorkflowStep{
+		ID:              stepID,
+		OrganizationID:  organizationID,
+		WorkflowID:      workflowID,
+		Trigger:         step.Trigger,
+		Channel:         step.Channel,
+		Audience:        step.Audience,
+		Action:          step.Action,
+		StepOrder:       step.StepOrder,
+		DelayMinutes:    step.DelayMinutes,
+		Enabled:         step.Enabled,
+		RecipientConfig: step.RecipientConfig,
+		TemplateSubject: step.TemplateSubject,
+		TemplateBody:    step.TemplateBody,
+		StopOnReply:     step.StopOnReply,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}, nil
+}
+
+func (r *Repository) UpdateWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID, step WorkflowStepUpsert) (WorkflowStep, error) {
+	recipientConfigJSON, err := marshalRecipientConfig(step.RecipientConfig)
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	_, err = r.queries.UpdateWorkflowStep(ctx, identitydb.UpdateWorkflowStepParams{
+		ID:              toPgUUID(stepID),
+		OrganizationID:  toPgUUID(organizationID),
+		WorkflowID:      toPgUUID(workflowID),
+		Trigger:         step.Trigger,
+		Channel:         step.Channel,
+		Audience:        step.Audience,
+		Action:          step.Action,
+		StepOrder:       int32(step.StepOrder),
+		DelayMinutes:    int32(step.DelayMinutes),
+		Enabled:         step.Enabled,
+		Column11:        recipientConfigJSON,
+		TemplateSubject: toPgTextPtr(step.TemplateSubject),
+		TemplateBody:    toPgTextPtr(step.TemplateBody),
+		StopOnReply:     step.StopOnReply,
+	})
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	row, err := r.queries.GetWorkflowStep(ctx, identitydb.GetWorkflowStepParams{
+		ID:             toPgUUID(stepID),
+		OrganizationID: toPgUUID(organizationID),
+		WorkflowID:     toPgUUID(workflowID),
+	})
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	return workflowStepFromModel(row)
+}
+
+func (r *Repository) DeleteWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID) error {
+	return r.queries.DeleteWorkflowStep(ctx, identitydb.DeleteWorkflowStepParams{
+		ID:             toPgUUID(stepID),
+		OrganizationID: toPgUUID(organizationID),
+		WorkflowID:     toPgUUID(workflowID),
+	})
+}
+
+func (r *Repository) GetWorkflowStep(ctx context.Context, organizationID, workflowID, stepID uuid.UUID) (WorkflowStep, error) {
+	row, err := r.queries.GetWorkflowStep(ctx, identitydb.GetWorkflowStepParams{
+		ID:             toPgUUID(stepID),
+		OrganizationID: toPgUUID(organizationID),
+		WorkflowID:     toPgUUID(workflowID),
+	})
+	if err != nil {
+		return WorkflowStep{}, err
+	}
+	return workflowStepFromModel(row)
 }
 
 func toPgUUIDSlice(values []uuid.UUID) []pgtype.UUID {
