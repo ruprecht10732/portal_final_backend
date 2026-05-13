@@ -23,6 +23,8 @@ const (
 	msgInvalidRequest        = "invalid request"
 	msgValidationFailed      = "validation failed"
 	msgTenantNotSet          = "tenant not set"
+	pathWorkflows            = "/organizations/me/workflow-engine/workflows"
+	pathWorkflow             = "/organizations/me/workflow-engine/workflows/:workflowID"
 	pathLeadWorkflowOverride = "/organizations/me/workflow-engine/leads/:leadID/override"
 	pathLeadWorkflowResolve  = "/organizations/me/workflow-engine/leads/:leadID/resolve"
 )
@@ -37,13 +39,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/organizations/me/settings", h.GetOrganizationSettings)
 	rg.PATCH("/organizations/me/settings", h.UpdateOrganizationSettings)
 	rg.GET("/organizations/me/whatsapp/reply-scenario-analytics", h.ListWhatsAppReplyScenarioAnalytics)
-	rg.GET("/organizations/me/workflow-engine/workflows", h.ListWorkflows)
-	rg.POST("/organizations/me/workflow-engine/workflows", h.CreateWorkflow)
-	rg.PUT("/organizations/me/workflow-engine/workflows", h.ReplaceWorkflows)
-	rg.GET("/organizations/me/workflow-engine/workflows/:workflowID", h.GetWorkflow)
-	rg.PATCH("/organizations/me/workflow-engine/workflows/:workflowID", h.UpdateWorkflow)
-	rg.DELETE("/organizations/me/workflow-engine/workflows/:workflowID", h.DeleteWorkflow)
-	rg.POST("/organizations/me/workflow-engine/workflows/:workflowID/steps", h.CreateWorkflowStep)
+	rg.GET(pathWorkflows, h.ListWorkflows)
+	rg.POST(pathWorkflows, h.CreateWorkflow)
+	rg.PUT(pathWorkflows, h.ReplaceWorkflows)
+	rg.GET(pathWorkflow, h.GetWorkflow)
+	rg.PATCH(pathWorkflow, h.UpdateWorkflow)
+	rg.DELETE(pathWorkflow, h.DeleteWorkflow)
+	rg.POST(pathWorkflow+"/steps", h.CreateWorkflowStep)
 	rg.PATCH("/organizations/me/workflow-engine/workflows/:workflowID/steps/:stepID", h.UpdateWorkflowStep)
 	rg.DELETE("/organizations/me/workflow-engine/workflows/:workflowID/steps/:stepID", h.DeleteWorkflowStep)
 	rg.GET("/organizations/me/workflow-engine/assignment-rules", h.ListWorkflowAssignmentRules)

@@ -13,7 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const msgInvalidLeadID = "invalid lead id"
+const (
+	msgInvalidLeadID     = "invalid lead id"
+	msgInvalidWorkflowID = "invalid workflowId"
+)
 
 func (h *Handler) ListWorkflows(c *gin.Context) {
 	tenantID, ok := h.requireTenantID(c)
@@ -99,7 +102,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 
@@ -127,7 +130,7 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 
@@ -172,7 +175,7 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 
@@ -282,7 +285,7 @@ func (h *Handler) ReplaceWorkflowAssignmentRules(c *gin.Context) {
 	for _, rule := range req.Rules {
 		workflowID, err := uuid.Parse(rule.WorkflowID)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 			return
 		}
 
@@ -394,7 +397,7 @@ func (h *Handler) UpsertLeadWorkflowOverride(c *gin.Context) {
 	if req.WorkflowID != nil {
 		parsedWorkflowID, err := uuid.Parse(*req.WorkflowID)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 			return
 		}
 		workflowID = &parsedWorkflowID
@@ -504,7 +507,7 @@ func (h *Handler) CreateWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 
@@ -543,7 +546,7 @@ func (h *Handler) UpdateWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 	stepID, err := uuid.Parse(c.Param("stepID"))
@@ -587,7 +590,7 @@ func (h *Handler) DeleteWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
 		return
 	}
 	stepID, err := uuid.Parse(c.Param("stepID"))
