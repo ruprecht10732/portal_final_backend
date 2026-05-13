@@ -151,6 +151,87 @@ func (r *Repository) ListWorkflows(ctx context.Context, organizationID uuid.UUID
 	return workflows, nil
 }
 
+func (r *Repository) GetWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID) (Workflow, error) {
+	row, err := r.queries.GetWorkflow(ctx, identitydb.GetWorkflowParams{
+		ID:             toPgUUID(workflowID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return Workflow{}, ErrNotFound
+		}
+		return Workflow{}, err
+	}
+
+	workflow := workflowFromModel(row)
+
+	stepRows, err := r.queries.ListWorkflowSteps(ctx, toPgUUID(organizationID))
+	if err != nil {
+		return Workflow{}, err
+	}
+	for _, stepRow := range stepRows {
+		step, err := workflowStepFromModel(stepRow)
+		if err != nil {
+			return Workflow{}, err
+		}
+		if step.WorkflowID == workflowID {
+			workflow.Steps = append(workflow.Steps, step)
+		}
+	}
+
+	return workflow, nil
+}
+
+func (r *Repository) CreateWorkflow(ctx context.Context, organizationID uuid.UUID, workflow WorkflowUpsert) (Workflow, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Workflow{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	queries := r.queries.WithTx(tx)
+	wf, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
+	if err != nil {
+		return Workflow{}, err
+	}
+
+	steps, err := upsertWorkflowStepsTx(ctx, queries, organizationID, wf.ID, workflow.Steps)
+	if err != nil {
+		return Workflow{}, err
+	}
+	wf.Steps = steps
+
+	if err := tx.Commit(ctx); err != nil {
+		return Workflow{}, err
+	}
+	return wf, nil
+}
+
+func (r *Repository) UpdateWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID, workflow WorkflowUpsert) (Workflow, error) {
+	_, err := r.queries.UpdateWorkflow(ctx, identitydb.UpdateWorkflowParams{
+		ID:                       toPgUUID(workflowID),
+		OrganizationID:           toPgUUID(organizationID),
+		WorkflowKey:              workflow.WorkflowKey,
+		Name:                     workflow.Name,
+		Description:              toPgTextPtr(workflow.Description),
+		Enabled:                  workflow.Enabled,
+		QuoteValidDaysOverride:   toPgInt4Ptr(workflow.QuoteValidDaysOverride),
+		QuotePaymentDaysOverride: toPgInt4Ptr(workflow.QuotePaymentDaysOverride),
+	})
+	if err != nil {
+		return Workflow{}, err
+	}
+
+	return r.GetWorkflow(ctx, workflowID, organizationID)
+}
+
+func (r *Repository) DeleteWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID) error {
+	return r.queries.DeleteWorkflow(ctx, identitydb.DeleteWorkflowParams{
+		ID:             toPgUUID(workflowID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+}
+
 func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID, workflows []WorkflowUpsert) ([]Workflow, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

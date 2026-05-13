@@ -237,6 +237,25 @@ func (s *Service) ListWorkflows(ctx context.Context, organizationID uuid.UUID) (
 	return s.repo.ListWorkflows(ctx, organizationID)
 }
 
+func (s *Service) GetWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID) (repository.Workflow, error) {
+	return s.repo.GetWorkflow(ctx, workflowID, organizationID)
+}
+
+func (s *Service) CreateWorkflow(ctx context.Context, organizationID uuid.UUID, workflow repository.WorkflowUpsert) (repository.Workflow, error) {
+	if len(workflow.Steps) == 0 {
+		return repository.Workflow{}, apperr.Validation("workflow steps cannot be empty")
+	}
+	return s.repo.CreateWorkflow(ctx, organizationID, workflow)
+}
+
+func (s *Service) UpdateWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID, workflow repository.WorkflowUpsert) (repository.Workflow, error) {
+	return s.repo.UpdateWorkflow(ctx, workflowID, organizationID, workflow)
+}
+
+func (s *Service) DeleteWorkflow(ctx context.Context, workflowID, organizationID uuid.UUID) error {
+	return s.repo.DeleteWorkflow(ctx, workflowID, organizationID)
+}
+
 func (s *Service) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID, workflows []repository.WorkflowUpsert) ([]repository.Workflow, error) {
 	for _, wf := range workflows {
 		if len(wf.Steps) == 0 {

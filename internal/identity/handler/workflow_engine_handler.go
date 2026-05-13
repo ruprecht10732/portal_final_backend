@@ -83,6 +83,156 @@ func (h *Handler) ReplaceWorkflows(c *gin.Context) {
 	httpkit.OK(c, transport.ListWorkflowsResponse{Workflows: resp})
 }
 
+func (h *Handler) GetWorkflow(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+
+	workflow, err := h.svc.GetWorkflow(c.Request.Context(), workflowID, *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapWorkflowResponse(workflow))
+}
+
+func (h *Handler) UpdateWorkflow(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+
+	var req transport.UpdateWorkflowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	workflow, err := h.svc.UpdateWorkflow(c.Request.Context(), workflowID, *tenantID, repository.WorkflowUpsert{
+		WorkflowKey:              req.WorkflowKey,
+		Name:                     req.Name,
+		Description:              req.Description,
+		Enabled:                  req.Enabled,
+		QuoteValidDaysOverride:   req.QuoteValidDaysOverride,
+		QuotePaymentDaysOverride: req.QuotePaymentDaysOverride,
+	})
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapWorkflowResponse(workflow))
+}
+
+func (h *Handler) DeleteWorkflow(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	workflowID, err := uuid.Parse(c.Param("workflowID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid workflowId")
+		return
+	}
+
+	if err := h.svc.DeleteWorkflow(c.Request.Context(), workflowID, *tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "deleted"})
+}
+
+func (h *Handler) CreateWorkflow(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+	if !h.canManageWorkflowEngine(c, *tenantID, identity.UserID(), identity.HasRole("admin")) {
+		return
+	}
+
+	var req transport.CreateWorkflowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	steps := make([]repository.WorkflowStepUpsert, 0, len(req.Steps))
+	for _, step := range req.Steps {
+		stepUpsert, err := mapWorkflowStepUpsertRequest(step)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+			return
+		}
+		steps = append(steps, stepUpsert)
+	}
+
+	workflow, err := h.svc.CreateWorkflow(c.Request.Context(), *tenantID, repository.WorkflowUpsert{
+		WorkflowKey:              req.WorkflowKey,
+		Name:                     req.Name,
+		Description:              req.Description,
+		Enabled:                  req.Enabled,
+		QuoteValidDaysOverride:   req.QuoteValidDaysOverride,
+		QuotePaymentDaysOverride: req.QuotePaymentDaysOverride,
+		Steps:                    steps,
+	})
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapWorkflowResponse(workflow))
+}
+
 func (h *Handler) ListWorkflowAssignmentRules(c *gin.Context) {
 	tenantID, ok := h.requireTenantID(c)
 	if !ok {

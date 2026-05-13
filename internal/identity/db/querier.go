@@ -24,6 +24,7 @@ type Querier interface {
 	CreateWorkflowStep(ctx context.Context, arg CreateWorkflowStepParams) (pgtype.UUID, error)
 	DefaultWorkflowAssignmentRuleExists(ctx context.Context, organizationID pgtype.UUID) (bool, error)
 	DeleteLeadWorkflowOverride(ctx context.Context, arg DeleteLeadWorkflowOverrideParams) error
+	DeleteWorkflow(ctx context.Context, arg DeleteWorkflowParams) error
 	DeleteWorkflowAssignmentRulesByOrganization(ctx context.Context, organizationID pgtype.UUID) error
 	DeleteWorkflowStep(ctx context.Context, arg DeleteWorkflowStepParams) error
 	DeleteWorkflowStepsByWorkflow(ctx context.Context, arg DeleteWorkflowStepsByWorkflowParams) error
@@ -35,6 +36,7 @@ type Querier interface {
 	GetOrganization(ctx context.Context, id pgtype.UUID) (GetOrganizationRow, error)
 	GetOrganizationSettings(ctx context.Context, organizationID pgtype.UUID) (GetOrganizationSettingsRow, error)
 	GetUserOrganizationID(ctx context.Context, userID pgtype.UUID) (pgtype.UUID, error)
+	GetWorkflow(ctx context.Context, arg GetWorkflowParams) (RacWorkflow, error)
 	GetWorkflowStep(ctx context.Context, arg GetWorkflowStepParams) (RacWorkflowStep, error)
 	LeadExistsInOrganization(ctx context.Context, arg LeadExistsInOrganizationParams) (bool, error)
 	ListInvites(ctx context.Context, organizationID pgtype.UUID) ([]RacOrganizationInvite, error)
@@ -46,6 +48,7 @@ type Querier interface {
 	UpdateInvite(ctx context.Context, arg UpdateInviteParams) (RacOrganizationInvite, error)
 	UpdateOrganizationLogo(ctx context.Context, arg UpdateOrganizationLogoParams) (UpdateOrganizationLogoRow, error)
 	UpdateOrganizationProfile(ctx context.Context, arg UpdateOrganizationProfileParams) (UpdateOrganizationProfileRow, error)
+	UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) (pgtype.UUID, error)
 	UpdateWorkflowStep(ctx context.Context, arg UpdateWorkflowStepParams) (pgtype.UUID, error)
 	UpsertLeadWorkflowOverride(ctx context.Context, arg UpsertLeadWorkflowOverrideParams) (RacLeadWorkflowOverride, error)
 	UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganizationSMTPParams) (UpsertOrganizationSMTPRow, error)

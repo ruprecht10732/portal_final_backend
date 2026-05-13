@@ -296,6 +296,29 @@ FROM RAC_workflows
 WHERE organization_id = $1
 ORDER BY workflow_key ASC;
 
+-- name: GetWorkflow :one
+SELECT id, organization_id, workflow_key, name, description, enabled,
+       quote_valid_days_override, quote_payment_days_override, created_at, updated_at
+FROM RAC_workflows
+WHERE id = $1 AND organization_id = $2;
+
+-- name: UpdateWorkflow :one
+UPDATE RAC_workflows
+SET
+  workflow_key = $3,
+  name = $4,
+  description = $5,
+  enabled = $6,
+  quote_valid_days_override = $7,
+  quote_payment_days_override = $8,
+  updated_at = now()
+WHERE id = $1 AND organization_id = $2
+RETURNING id;
+
+-- name: DeleteWorkflow :exec
+DELETE FROM RAC_workflows
+WHERE id = $1 AND organization_id = $2;
+
 -- name: ListWorkflowSteps :many
 SELECT id, organization_id, workflow_id, trigger, channel, audience, action,
        step_order, delay_minutes, enabled, recipient_config, template_subject,

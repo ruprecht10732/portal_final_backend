@@ -433,6 +433,21 @@ func (q *Queries) DeleteLeadWorkflowOverride(ctx context.Context, arg DeleteLead
 	return err
 }
 
+const deleteWorkflow = `-- name: DeleteWorkflow :exec
+DELETE FROM RAC_workflows
+WHERE id = $1 AND organization_id = $2
+`
+
+type DeleteWorkflowParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteWorkflow(ctx context.Context, arg DeleteWorkflowParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkflow, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const deleteWorkflowAssignmentRulesByOrganization = `-- name: DeleteWorkflowAssignmentRulesByOrganization :exec
 DELETE FROM RAC_workflow_assignment_rules
 WHERE organization_id = $1
@@ -715,6 +730,36 @@ func (q *Queries) GetUserOrganizationID(ctx context.Context, userID pgtype.UUID)
 	var organization_id pgtype.UUID
 	err := row.Scan(&organization_id)
 	return organization_id, err
+}
+
+const getWorkflow = `-- name: GetWorkflow :one
+SELECT id, organization_id, workflow_key, name, description, enabled,
+       quote_valid_days_override, quote_payment_days_override, created_at, updated_at
+FROM RAC_workflows
+WHERE id = $1 AND organization_id = $2
+`
+
+type GetWorkflowParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetWorkflow(ctx context.Context, arg GetWorkflowParams) (RacWorkflow, error) {
+	row := q.db.QueryRow(ctx, getWorkflow, arg.ID, arg.OrganizationID)
+	var i RacWorkflow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.WorkflowKey,
+		&i.Name,
+		&i.Description,
+		&i.Enabled,
+		&i.QuoteValidDaysOverride,
+		&i.QuotePaymentDaysOverride,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getWorkflowStep = `-- name: GetWorkflowStep :one
@@ -1272,6 +1317,47 @@ func (q *Queries) UpdateOrganizationProfile(ctx context.Context, arg UpdateOrgan
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateWorkflow = `-- name: UpdateWorkflow :one
+UPDATE RAC_workflows
+SET
+  workflow_key = $3,
+  name = $4,
+  description = $5,
+  enabled = $6,
+  quote_valid_days_override = $7,
+  quote_payment_days_override = $8,
+  updated_at = now()
+WHERE id = $1 AND organization_id = $2
+RETURNING id
+`
+
+type UpdateWorkflowParams struct {
+	ID                       pgtype.UUID `json:"id"`
+	OrganizationID           pgtype.UUID `json:"organization_id"`
+	WorkflowKey              string      `json:"workflow_key"`
+	Name                     string      `json:"name"`
+	Description              pgtype.Text `json:"description"`
+	Enabled                  bool        `json:"enabled"`
+	QuoteValidDaysOverride   pgtype.Int4 `json:"quote_valid_days_override"`
+	QuotePaymentDaysOverride pgtype.Int4 `json:"quote_payment_days_override"`
+}
+
+func (q *Queries) UpdateWorkflow(ctx context.Context, arg UpdateWorkflowParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, updateWorkflow,
+		arg.ID,
+		arg.OrganizationID,
+		arg.WorkflowKey,
+		arg.Name,
+		arg.Description,
+		arg.Enabled,
+		arg.QuoteValidDaysOverride,
+		arg.QuotePaymentDaysOverride,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateWorkflowStep = `-- name: UpdateWorkflowStep :one

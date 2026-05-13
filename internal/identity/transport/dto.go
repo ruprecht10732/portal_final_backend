@@ -291,6 +291,25 @@ type ReplaceWorkflowsRequest struct {
 	Workflows []UpsertWorkflowRequest `json:"workflows" validate:"required,min=1,max=100,dive"`
 }
 
+type CreateWorkflowRequest struct {
+	WorkflowKey              string                     `json:"workflowKey" validate:"required,max=120"`
+	Name                     string                     `json:"name" validate:"required,max=160"`
+	Description              *string                    `json:"description,omitempty" validate:"omitempty,max=500"`
+	Enabled                  bool                       `json:"enabled"`
+	QuoteValidDaysOverride   *int                       `json:"quoteValidDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+	QuotePaymentDaysOverride *int                       `json:"quotePaymentDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+	Steps                    []UpsertWorkflowStepRequest `json:"steps" validate:"required,min=1,max=50,dive"`
+}
+
+type UpdateWorkflowRequest struct {
+	WorkflowKey              string  `json:"workflowKey" validate:"required,max=120"`
+	Name                     string  `json:"name" validate:"required,max=160"`
+	Description              *string `json:"description,omitempty" validate:"omitempty,max=500"`
+	Enabled                  bool    `json:"enabled"`
+	QuoteValidDaysOverride   *int    `json:"quoteValidDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+	QuotePaymentDaysOverride *int    `json:"quotePaymentDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+}
+
 type WorkflowAssignmentRuleResponse struct {
 	ID              string    `json:"id"`
 	WorkflowID      string    `json:"workflowId"`
