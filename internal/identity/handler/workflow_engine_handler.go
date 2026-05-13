@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"portal_final_backend/internal/identity/repository"
@@ -102,7 +103,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 
@@ -130,7 +131,7 @@ func (h *Handler) UpdateWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 
@@ -175,7 +176,7 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 
@@ -283,35 +284,11 @@ func (h *Handler) ReplaceWorkflowAssignmentRules(c *gin.Context) {
 
 	upserts := make([]repository.WorkflowAssignmentRuleUpsert, 0, len(req.Rules))
 	for _, rule := range req.Rules {
-		workflowID, err := uuid.Parse(rule.WorkflowID)
+		upsert, err := parseAssignmentRuleUpsert(rule)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
 			return
 		}
-
-		enabled := true
-		if rule.Enabled != nil {
-			enabled = *rule.Enabled
-		}
-		upsert := repository.WorkflowAssignmentRuleUpsert{
-			Name:            rule.Name,
-			Enabled:         enabled,
-			Priority:        rule.Priority,
-			WorkflowID:      workflowID,
-			LeadSource:      rule.LeadSource,
-			LeadServiceType: rule.LeadServiceType,
-			PipelineStage:   rule.PipelineStage,
-		}
-
-		if rule.ID != nil {
-			parsedRuleID, err := uuid.Parse(*rule.ID)
-			if err != nil {
-				httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid rule id")
-				return
-			}
-			upsert.ID = &parsedRuleID
-		}
-
 		upserts = append(upserts, upsert)
 	}
 
@@ -397,7 +374,7 @@ func (h *Handler) UpsertLeadWorkflowOverride(c *gin.Context) {
 	if req.WorkflowID != nil {
 		parsedWorkflowID, err := uuid.Parse(*req.WorkflowID)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 			return
 		}
 		workflowID = &parsedWorkflowID
@@ -507,7 +484,7 @@ func (h *Handler) CreateWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 
@@ -546,7 +523,7 @@ func (h *Handler) UpdateWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 	stepID, err := uuid.Parse(c.Param("stepID"))
@@ -590,7 +567,7 @@ func (h *Handler) DeleteWorkflowStep(c *gin.Context) {
 
 	workflowID, err := uuid.Parse(c.Param("workflowID"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "msgInvalidWorkflowID")
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, msgInvalidWorkflowID)
 		return
 	}
 	stepID, err := uuid.Parse(c.Param("stepID"))
@@ -809,6 +786,38 @@ func mapWorkflowStepUpsertRequest(req transport.UpsertWorkflowStepRequest) (repo
 	}
 
 	return step, nil
+}
+
+func parseAssignmentRuleUpsert(rule transport.UpsertWorkflowAssignmentRuleRequest) (repository.WorkflowAssignmentRuleUpsert, error) {
+	workflowID, err := uuid.Parse(rule.WorkflowID)
+	if err != nil {
+		return repository.WorkflowAssignmentRuleUpsert{}, fmt.Errorf("%s", msgInvalidWorkflowID)
+	}
+
+	enabled := true
+	if rule.Enabled != nil {
+		enabled = *rule.Enabled
+	}
+
+	upsert := repository.WorkflowAssignmentRuleUpsert{
+		Name:            rule.Name,
+		Enabled:         enabled,
+		Priority:        rule.Priority,
+		WorkflowID:      workflowID,
+		LeadSource:      rule.LeadSource,
+		LeadServiceType: rule.LeadServiceType,
+		PipelineStage:   rule.PipelineStage,
+	}
+
+	if rule.ID != nil {
+		parsedRuleID, err := uuid.Parse(*rule.ID)
+		if err != nil {
+			return repository.WorkflowAssignmentRuleUpsert{}, fmt.Errorf("invalid rule id")
+		}
+		upsert.ID = &parsedRuleID
+	}
+
+	return upsert, nil
 }
 
 func mapWorkflowAssignmentRuleResponse(rule repository.WorkflowAssignmentRule) transport.WorkflowAssignmentRuleResponse {
