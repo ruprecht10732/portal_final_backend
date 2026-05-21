@@ -286,7 +286,7 @@ func buildRuntime(cfg *config.Config, repo repository.LeadsRepository, scorer *s
 
 	rt := agent.NewRuntime(
 		sessionService,
-		resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true),
+		resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, false),
 		resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, false),
 		resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, false),
 		resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, false),
