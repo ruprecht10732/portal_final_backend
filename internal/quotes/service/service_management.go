@@ -301,11 +301,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		return nil, err
 	}
 
-	// Validate extension: only Draft, Sent, or Accepted quotes can be extended
-	if req.ValidUntil != nil && quote.Status != string(transport.QuoteStatusDraft) &&
-		quote.Status != string(transport.QuoteStatusSent) &&
-		quote.Status != string(transport.QuoteStatusAccepted) {
-		return nil, apperr.Validation(fmt.Sprintf("cannot extend quote with status '%s'; only Draft, Sent, or Accepted quotes can be extended", quote.Status))
+	if err := s.validateQuoteUpdate(quote, req); err != nil {
+		return nil, err
 	}
 
 	pdfShouldInvalidate := quoteUpdateAffectsRenderedPDF(req)
@@ -314,22 +311,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		return nil, err
 	}
 
-	// When the quote validity is explicitly updated, keep any existing access
-	// tokens in sync so that customers can still open previously-shared links.
-	if req.ValidUntil != nil && quote.ValidUntil != nil {
-		newValidUntil := *quote.ValidUntil
-		if quote.PublicToken != nil && (quote.PublicTokenExpAt == nil || quote.PublicTokenExpAt.Before(newValidUntil)) {
-			if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, *quote.PublicToken, newValidUntil); err != nil {
-				return nil, err
-			}
-			quote.PublicTokenExpAt = &newValidUntil
-		}
-		if quote.PreviewToken != nil && (quote.PreviewTokenExpAt == nil || quote.PreviewTokenExpAt.Before(newValidUntil)) {
-			if err := s.repo.SetPreviewToken(ctx, quote.ID, tenantID, *quote.PreviewToken, newValidUntil); err != nil {
-				return nil, err
-			}
-			quote.PreviewTokenExpAt = &newValidUntil
-		}
+	if err := s.syncTokenExpirationsWithValidUntil(ctx, quote, tenantID); err != nil {
+		return nil, err
 	}
 
 	items, err := s.resolveQuoteUpdateItems(ctx, quote.ID, tenantID, req)
@@ -348,6 +331,48 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	quote.TotalCents = calc.TotalCents
 	quote.UpdatedAt = time.Now()
 
+	if err := s.persistQuoteUpdate(ctx, quote, items, tenantID, actorID, req, pdfShouldInvalidate); err != nil {
+		return nil, err
+	}
+
+	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, quote.ID)
+	if err != nil {
+		annotations = nil
+	}
+
+	return s.buildResponse(ctx, quote, items, annotations)
+}
+
+func (s *Service) validateQuoteUpdate(quote *repository.Quote, req transport.UpdateQuoteRequest) error {
+	if req.ValidUntil != nil && quote.Status != string(transport.QuoteStatusDraft) &&
+		quote.Status != string(transport.QuoteStatusSent) &&
+		quote.Status != string(transport.QuoteStatusAccepted) {
+		return apperr.Validation(fmt.Sprintf("cannot extend quote with status '%s'; only Draft, Sent, or Accepted quotes can be extended", quote.Status))
+	}
+	return nil
+}
+
+func (s *Service) syncTokenExpirationsWithValidUntil(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) error {
+	if quote.ValidUntil == nil {
+		return nil
+	}
+	newValidUntil := *quote.ValidUntil
+	if quote.PublicToken != nil && (quote.PublicTokenExpAt == nil || quote.PublicTokenExpAt.Before(newValidUntil)) {
+		if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, *quote.PublicToken, newValidUntil); err != nil {
+			return err
+		}
+		quote.PublicTokenExpAt = &newValidUntil
+	}
+	if quote.PreviewToken != nil && (quote.PreviewTokenExpAt == nil || quote.PreviewTokenExpAt.Before(newValidUntil)) {
+		if err := s.repo.SetPreviewToken(ctx, quote.ID, tenantID, *quote.PreviewToken, newValidUntil); err != nil {
+			return err
+		}
+		quote.PreviewTokenExpAt = &newValidUntil
+	}
+	return nil
+}
+
+func (s *Service) persistQuoteUpdate(ctx context.Context, quote *repository.Quote, items []repository.QuoteItem, tenantID uuid.UUID, actorID uuid.UUID, req transport.UpdateQuoteRequest, pdfShouldInvalidate bool) error {
 	if err := s.repo.UpdateWithItems(ctx, quote, items, req.Items != nil, &repository.QuotePricingSnapshot{
 		QuoteID:             quote.ID,
 		OrganizationID:      tenantID,
@@ -364,28 +389,19 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		CreatedByActor:      "user",
 		CreatedByUserID:     &actorID,
 	}); err != nil {
-		return nil, err
+		return err
 	}
 	if req.Attachments != nil {
 		if err := s.saveAttachments(ctx, quote.ID, tenantID, *req.Attachments); err != nil {
-			return nil, fmt.Errorf(errSaveAttachmentsFmt, err)
+			return fmt.Errorf(errSaveAttachmentsFmt, err)
 		}
 	}
 	if req.URLs != nil {
 		if err := s.saveURLs(ctx, quote.ID, tenantID, *req.URLs); err != nil {
-			return nil, fmt.Errorf(errSaveURLsFmt, err)
+			return fmt.Errorf(errSaveURLsFmt, err)
 		}
 	}
-	if err := s.invalidateRenderedPDF(ctx, quote, pdfShouldInvalidate); err != nil {
-		return nil, err
-	}
-
-	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, quote.ID)
-	if err != nil {
-		annotations = nil
-	}
-
-	return s.buildResponse(ctx, quote, items, annotations)
+	return s.invalidateRenderedPDF(ctx, quote, pdfShouldInvalidate)
 }
 
 func quoteUpdateAffectsRenderedPDF(req transport.UpdateQuoteRequest) bool {
