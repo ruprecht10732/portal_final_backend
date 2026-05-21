@@ -314,6 +314,24 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		return nil, err
 	}
 
+	// When the quote validity is explicitly updated, keep any existing access
+	// tokens in sync so that customers can still open previously-shared links.
+	if req.ValidUntil != nil && quote.ValidUntil != nil {
+		newValidUntil := *quote.ValidUntil
+		if quote.PublicToken != nil && (quote.PublicTokenExpAt == nil || quote.PublicTokenExpAt.Before(newValidUntil)) {
+			if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, *quote.PublicToken, newValidUntil); err != nil {
+				return nil, err
+			}
+			quote.PublicTokenExpAt = &newValidUntil
+		}
+		if quote.PreviewToken != nil && (quote.PreviewTokenExpAt == nil || quote.PreviewTokenExpAt.Before(newValidUntil)) {
+			if err := s.repo.SetPreviewToken(ctx, quote.ID, tenantID, *quote.PreviewToken, newValidUntil); err != nil {
+				return nil, err
+			}
+			quote.PreviewTokenExpAt = &newValidUntil
+		}
+	}
+
 	items, err := s.resolveQuoteUpdateItems(ctx, quote.ID, tenantID, req)
 	if err != nil {
 		return nil, err
