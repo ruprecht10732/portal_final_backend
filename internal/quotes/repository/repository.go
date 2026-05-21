@@ -1775,6 +1775,52 @@ func (r *Repository) GetURLsByQuoteID(ctx context.Context, quoteID, orgID uuid.U
 	return result, nil
 }
 
+// GetAttachmentsByQuoteIDs retrieves all attachments for multiple quotes in a single query,
+// grouped by quote_id and sorted by sort_order.
+func (r *Repository) GetAttachmentsByQuoteIDs(ctx context.Context, orgID uuid.UUID, quoteIDs []uuid.UUID) (map[uuid.UUID][]QuoteAttachment, error) {
+	result := make(map[uuid.UUID][]QuoteAttachment, len(quoteIDs))
+	if len(quoteIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := r.queries.ListQuoteAttachmentsByQuoteIDs(ctx, quotesdb.ListQuoteAttachmentsByQuoteIDsParams{
+		OrganizationID: toPgUUID(orgID),
+		QuoteIds:       toPgUUIDSlice(quoteIDs),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query attachments by quote ids: %w", err)
+	}
+
+	for _, row := range rows {
+		attachment := quoteAttachmentFromModel(row)
+		result[attachment.QuoteID] = append(result[attachment.QuoteID], attachment)
+	}
+	return result, nil
+}
+
+// GetURLsByQuoteIDs retrieves all URLs for multiple quotes in a single query,
+// grouped by quote_id and sorted by created_at.
+func (r *Repository) GetURLsByQuoteIDs(ctx context.Context, orgID uuid.UUID, quoteIDs []uuid.UUID) (map[uuid.UUID][]QuoteURL, error) {
+	result := make(map[uuid.UUID][]QuoteURL, len(quoteIDs))
+	if len(quoteIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := r.queries.ListQuoteURLsByQuoteIDs(ctx, quotesdb.ListQuoteURLsByQuoteIDsParams{
+		OrganizationID: toPgUUID(orgID),
+		QuoteIds:       toPgUUIDSlice(quoteIDs),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query urls by quote ids: %w", err)
+	}
+
+	for _, row := range rows {
+		url := quoteURLFromModel(row)
+		result[url.QuoteID] = append(result[url.QuoteID], url)
+	}
+	return result, nil
+}
+
 // GetAttachmentsByQuoteIDNoOrg retrieves all attachments for a quote without org scoping (for public/PDF access).
 func (r *Repository) GetAttachmentsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteAttachment, error) {
 	rows, err := r.queries.ListQuoteAttachmentsByQuoteIDNoOrg(ctx, toPgUUID(quoteID))

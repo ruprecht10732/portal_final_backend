@@ -2327,6 +2327,48 @@ func (q *Queries) ListQuoteAttachmentsByQuoteIDNoOrg(ctx context.Context, quoteI
 	return items, nil
 }
 
+const listQuoteAttachmentsByQuoteIDs = `-- name: ListQuoteAttachmentsByQuoteIDs :many
+SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
+FROM RAC_quote_attachments WHERE organization_id = $1 AND quote_id = ANY($2::uuid[])
+ORDER BY quote_id, sort_order ASC
+`
+
+type ListQuoteAttachmentsByQuoteIDsParams struct {
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	QuoteIds       []pgtype.UUID `json:"quote_ids"`
+}
+
+func (q *Queries) ListQuoteAttachmentsByQuoteIDs(ctx context.Context, arg ListQuoteAttachmentsByQuoteIDsParams) ([]RacQuoteAttachment, error) {
+	rows, err := q.db.Query(ctx, listQuoteAttachmentsByQuoteIDs, arg.OrganizationID, arg.QuoteIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacQuoteAttachment
+	for rows.Next() {
+		var i RacQuoteAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuoteID,
+			&i.OrganizationID,
+			&i.Filename,
+			&i.FileKey,
+			&i.Source,
+			&i.CatalogProductID,
+			&i.Enabled,
+			&i.SortOrder,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQuoteItemsByQuoteID = `-- name: ListQuoteItemsByQuoteID :many
 SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
   unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
@@ -2561,6 +2603,46 @@ FROM RAC_quote_urls WHERE quote_id = $1 ORDER BY created_at ASC
 
 func (q *Queries) ListQuoteURLsByQuoteIDNoOrg(ctx context.Context, quoteID pgtype.UUID) ([]RacQuoteUrl, error) {
 	rows, err := q.db.Query(ctx, listQuoteURLsByQuoteIDNoOrg, quoteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacQuoteUrl
+	for rows.Next() {
+		var i RacQuoteUrl
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuoteID,
+			&i.OrganizationID,
+			&i.Label,
+			&i.Href,
+			&i.Accepted,
+			&i.CatalogProductID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQuoteURLsByQuoteIDs = `-- name: ListQuoteURLsByQuoteIDs :many
+SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
+FROM RAC_quote_urls WHERE organization_id = $1 AND quote_id = ANY($2::uuid[])
+ORDER BY quote_id, created_at ASC
+`
+
+type ListQuoteURLsByQuoteIDsParams struct {
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	QuoteIds       []pgtype.UUID `json:"quote_ids"`
+}
+
+func (q *Queries) ListQuoteURLsByQuoteIDs(ctx context.Context, arg ListQuoteURLsByQuoteIDsParams) ([]RacQuoteUrl, error) {
+	rows, err := q.db.Query(ctx, listQuoteURLsByQuoteIDs, arg.OrganizationID, arg.QuoteIds)
 	if err != nil {
 		return nil, err
 	}

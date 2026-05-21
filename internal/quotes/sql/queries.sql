@@ -704,6 +704,16 @@ FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2 ORDER BY
 SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
 FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2 ORDER BY created_at ASC;
 
+-- name: ListQuoteAttachmentsByQuoteIDs :many
+SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
+FROM RAC_quote_attachments WHERE organization_id = $1 AND quote_id = ANY(sqlc.arg(quote_ids)::uuid[])
+ORDER BY quote_id, sort_order ASC;
+
+-- name: ListQuoteURLsByQuoteIDs :many
+SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
+FROM RAC_quote_urls WHERE organization_id = $1 AND quote_id = ANY(sqlc.arg(quote_ids)::uuid[])
+ORDER BY quote_id, created_at ASC;
+
 -- name: ListQuoteAttachmentsByQuoteIDNoOrg :many
 SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
 FROM RAC_quote_attachments WHERE quote_id = $1 ORDER BY sort_order ASC;

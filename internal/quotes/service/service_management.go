@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -11,8 +9,6 @@ import (
 	"time"
 
 	"portal_final_backend/internal/events"
-	leadrepo "portal_final_backend/internal/leads/repository"
-	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/platform/apperr"
@@ -189,13 +185,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 	return s.buildResponse(ctx, &quote, items)
 }
 
-func (s *Service) Duplicate(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID) (*transport.QuoteResponse, error) {
-	return s.cloneQuote(ctx, id, tenantID, actorID, quoteCloneModeDuplicate)
-}
 
-func (s *Service) CreateVersion(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID) (*transport.QuoteResponse, error) {
-	return s.cloneQuote(ctx, id, tenantID, actorID, quoteCloneModeVersion)
-}
 
 func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest) {
 	if req.PricingMode != nil {
@@ -290,7 +280,7 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	reqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
-		reqs[i] = transport.QuoteItemRequest{Title: "", Description: it.Description, Quantity: normalizeQuantityString(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
+		reqs[i] = transport.QuoteItemRequest{Title: it.Title, Description: it.Description, Quantity: normalizeQuantityString(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
 	}
 	return reqs
 }
@@ -464,7 +454,7 @@ func (s *Service) AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, or
 	quote.TotalCents = calc.TotalCents
 	quote.UpdatedAt = time.Now()
 
-	return s.repo.UpdateWithItems(ctx, quote, updatedItems, true, &repository.QuotePricingSnapshot{
+	if err := s.repo.UpdateWithItems(ctx, quote, updatedItems, true, &repository.QuotePricingSnapshot{
 		QuoteID:             quote.ID,
 		OrganizationID:      organizationID,
 		LeadID:              quote.LeadID,
@@ -481,7 +471,27 @@ func (s *Service) AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, or
 		Notes:               notes,
 		CreatedByActor:      "user",
 		CreatedByUserID:     &actorID,
+	}); err != nil {
+		return err
+	}
+
+	s.emitTimelineEvent(ctx, TimelineEventParams{
+		LeadID:         quote.LeadID,
+		ServiceID:      quote.LeadServiceID,
+		OrganizationID: organizationID,
+		ActorType:      "User",
+		ActorName:      actorID.String(),
+		EventType:      "quote_extra_work_added",
+		Title:          fmt.Sprintf("Extra work added to quote %s", quote.QuoteNumber),
+		Summary:        toPtr(fmt.Sprintf(msgTotalFormat, float64(quote.TotalCents)/100)),
+		Metadata: map[string]any{
+			"quoteId":        quote.ID,
+			"extraWorkCents": amountCents,
+			"status":         quote.Status,
+		},
 	})
+
+	return nil
 }
 
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (*transport.QuoteResponse, error) {
@@ -500,332 +510,12 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 	return s.buildResponse(ctx, quote, items, annotations)
 }
 
-type quoteCloneMode string
 
-const (
-	quoteCloneModeDuplicate quoteCloneMode = "duplicate"
-	quoteCloneModeVersion   quoteCloneMode = "version"
-)
-
-type quoteClonePayload struct {
-	quote              *repository.Quote
-	items              []repository.QuoteItem
-	attachments        []repository.QuoteAttachment
-	urls               []repository.QuoteURL
-	snapshotSourceType string
-}
-
-func (s *Service) cloneQuote(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID, mode quoteCloneMode) (*transport.QuoteResponse, error) {
-	source, err := s.repo.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateCloneSourceStatus(source, mode); err != nil {
-		return nil, err
-	}
-
-	items, attachments, urls, err := s.loadQuoteCloneData(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	clone, snapshotSourceType, err := s.prepareClonedQuote(ctx, tenantID, actorID, source, mode)
-	if err != nil {
-		return nil, err
-	}
-
-	clonedItems := cloneQuoteItems(clone.ID, tenantID, clone.CreatedAt, items)
-	payload := quoteClonePayload{
-		quote:              clone,
-		items:              clonedItems,
-		attachments:        attachments,
-		urls:               urls,
-		snapshotSourceType: snapshotSourceType,
-	}
-	if err := s.persistClonedQuote(ctx, tenantID, actorID, payload); err != nil {
-		return nil, err
-	}
-	if mode == quoteCloneModeVersion {
-		if err := s.repo.CopyAnnotationsToQuoteVersion(ctx, source.ID, clone.ID, tenantID); err != nil {
-			return nil, err
-		}
-		if err := s.transferPreviewLinkToClone(ctx, source, clone, tenantID); err != nil {
-			return nil, err
-		}
-	}
-
-	s.emitCloneTimelineEvent(ctx, tenantID, actorID, source, clone, mode)
-
-	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, clone.ID)
-	if err != nil {
-		annotations = nil
-	}
-
-	return s.buildResponse(ctx, clone, clonedItems, annotations)
-}
-
-func validateCloneSourceStatus(source *repository.Quote, mode quoteCloneMode) error {
-	if mode != quoteCloneModeVersion {
-		return nil
-	}
-	return validateVersionSourceStatus(source.Status)
-}
-
-func (s *Service) loadQuoteCloneData(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) ([]repository.QuoteItem, []repository.QuoteAttachment, []repository.QuoteURL, error) {
-	items, err := s.repo.GetItemsByQuoteID(ctx, id, tenantID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	attachments, err := s.repo.GetAttachmentsByQuoteID(ctx, id, tenantID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	urls, err := s.repo.GetURLsByQuoteID(ctx, id, tenantID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return items, attachments, urls, nil
-}
-
-func (s *Service) prepareClonedQuote(ctx context.Context, tenantID uuid.UUID, actorID uuid.UUID, source *repository.Quote, mode quoteCloneMode) (*repository.Quote, string, error) {
-	quoteNumber, err := s.repo.NextQuoteNumber(ctx, tenantID)
-	if err != nil {
-		return nil, "", fmt.Errorf("generate quote number: %w", err)
-	}
-
-	now := time.Now()
-	validUntil := cloneQuoteValidUntil(now, source.ValidUntil)
-	if validUntil == nil {
-		_, validDays := s.resolveEffectiveQuoteTerms(ctx, tenantID, source.LeadID, source.LeadServiceID)
-		if validDays > 0 {
-			expiresAt := now.AddDate(0, 0, validDays)
-			validUntil = &expiresAt
-		}
-	}
-
-	clone := &repository.Quote{
-		ID:                  uuid.New(),
-		OrganizationID:      tenantID,
-		LeadID:              source.LeadID,
-		LeadServiceID:       source.LeadServiceID,
-		CreatedByID:         &actorID,
-		QuoteNumber:         quoteNumber,
-		Status:              string(transport.QuoteStatusDraft),
-		PricingMode:         source.PricingMode,
-		DiscountType:        source.DiscountType,
-		DiscountValue:       source.DiscountValue,
-		SubtotalCents:       source.SubtotalCents,
-		DiscountAmountCents: source.DiscountAmountCents,
-		TaxTotalCents:       source.TaxTotalCents,
-		TotalCents:          source.TotalCents,
-		ValidUntil:          validUntil,
-		Notes:               source.Notes,
-		SubsidyData:         append([]byte(nil), source.SubsidyData...),
-		FinancingDisclaimer: source.FinancingDisclaimer,
-		CreatedAt:           now,
-		UpdatedAt:           now,
-		VersionNumber:       1,
-	}
-
-	snapshotSourceType := "manual_duplicate"
-	if mode == quoteCloneModeVersion {
-		snapshotSourceType = "manual_version"
-		versionRootID, nextVersion, versionErr := resolveQuoteVersionLineage(ctx, s.repo, source, tenantID)
-		if versionErr != nil {
-			return nil, "", versionErr
-		}
-		clone.PreviousVersionQuoteID = &source.ID
-		clone.VersionRootQuoteID = &versionRootID
-		clone.VersionNumber = nextVersion
-	} else {
-		clone.DuplicatedFromQuoteID = &source.ID
-	}
-	return clone, snapshotSourceType, nil
-}
-
-func (s *Service) persistClonedQuote(ctx context.Context, tenantID uuid.UUID, actorID uuid.UUID, payload quoteClonePayload) error {
-	if err := s.repo.CreateWithItems(ctx, payload.quote, payload.items, &repository.QuotePricingSnapshot{
-		QuoteID:             payload.quote.ID,
-		OrganizationID:      tenantID,
-		LeadID:              payload.quote.LeadID,
-		LeadServiceID:       payload.quote.LeadServiceID,
-		SourceType:          payload.snapshotSourceType,
-		PricingMode:         payload.quote.PricingMode,
-		DiscountType:        payload.quote.DiscountType,
-		DiscountValue:       payload.quote.DiscountValue,
-		SubtotalCents:       payload.quote.SubtotalCents,
-		DiscountAmountCents: payload.quote.DiscountAmountCents,
-		TaxTotalCents:       payload.quote.TaxTotalCents,
-		TotalCents:          payload.quote.TotalCents,
-		CreatedByActor:      "user",
-		CreatedByUserID:     &actorID,
-	}); err != nil {
-		return err
-	}
-
-	if err := s.saveAttachments(ctx, payload.quote.ID, tenantID, cloneAttachmentRequests(payload.attachments)); err != nil {
-		return fmt.Errorf(errSaveAttachmentsFmt, err)
-	}
-	if err := s.saveURLs(ctx, payload.quote.ID, tenantID, cloneURLRequests(payload.urls)); err != nil {
-		return fmt.Errorf(errSaveURLsFmt, err)
-	}
-	return nil
-}
-
-func (s *Service) emitCloneTimelineEvent(ctx context.Context, tenantID uuid.UUID, actorID uuid.UUID, source *repository.Quote, clone *repository.Quote, mode quoteCloneMode) {
-	eventType := "quote_duplicated"
-	title := fmt.Sprintf("Quote %s duplicated from %s", clone.QuoteNumber, source.QuoteNumber)
-	metadata := map[string]any{
-		"quoteId":           clone.ID,
-		"sourceQuoteId":     source.ID,
-		"sourceQuoteNumber": source.QuoteNumber,
-		"status":            clone.Status,
-	}
-	if mode == quoteCloneModeVersion {
-		eventType = "quote_version_created"
-		title = fmt.Sprintf("Quote %s v%d created from %s", clone.QuoteNumber, clone.VersionNumber, source.QuoteNumber)
-		metadata["versionNumber"] = clone.VersionNumber
-	}
-
-	s.emitTimelineEvent(ctx, TimelineEventParams{
-		LeadID:         clone.LeadID,
-		ServiceID:      clone.LeadServiceID,
-		OrganizationID: tenantID,
-		ActorType:      "User",
-		ActorName:      actorID.String(),
-		EventType:      eventType,
-		Title:          title,
-		Summary:        toPtr(fmt.Sprintf(msgTotalFormat, float64(clone.TotalCents)/100)),
-		Metadata:       metadata,
-	})
-}
-
-func validateVersionSourceStatus(status string) error {
-	if status != string(transport.QuoteStatusDraft) && status != string(transport.QuoteStatusSent) {
-		return apperr.BadRequest("new version can only be created from draft or sent quotes")
-	}
-	return nil
-}
-
-func (s *Service) transferPreviewLinkToClone(ctx context.Context, source *repository.Quote, clone *repository.Quote, tenantID uuid.UUID) error {
-	token := strings.TrimSpace(ptrToString(source.PreviewToken))
-	if token == "" {
-		return nil
-	}
-	if err := s.repo.MovePreviewToken(ctx, source.ID, clone.ID, tenantID); err != nil {
-		return err
-	}
-	clone.PreviewToken = source.PreviewToken
-	clone.PreviewTokenExpAt = source.PreviewTokenExpAt
-	return nil
-}
-
-func resolveQuoteVersionRootID(q *repository.Quote) uuid.UUID {
-	if q.VersionRootQuoteID != nil && *q.VersionRootQuoteID != uuid.Nil {
-		return *q.VersionRootQuoteID
-	}
-	return q.ID
-}
-
-func cloneQuoteValidUntil(now time.Time, sourceValidUntil *time.Time) *time.Time {
-	if sourceValidUntil == nil {
-		return nil
-	}
-	if sourceValidUntil.Before(now) {
-		return nil
-	}
-	copyValue := *sourceValidUntil
-	return &copyValue
-}
-
-func resolveQuoteVersionLineage(ctx context.Context, repo *repository.Repository, source *repository.Quote, tenantID uuid.UUID) (uuid.UUID, int, error) {
-	versionRootID := source.ID
-	if source.VersionRootQuoteID != nil {
-		versionRootID = *source.VersionRootQuoteID
-	}
-	nextVersion, err := repo.NextQuoteVersionNumber(ctx, tenantID, versionRootID)
-	if err != nil {
-		return uuid.Nil, 0, err
-	}
-	return versionRootID, nextVersion, nil
-}
-
-func cloneQuoteItems(quoteID, tenantID uuid.UUID, createdAt time.Time, items []repository.QuoteItem) []repository.QuoteItem {
-	cloned := make([]repository.QuoteItem, len(items))
-	for i, item := range items {
-		cloned[i] = repository.QuoteItem{
-			ID:               uuid.New(),
-			QuoteID:          quoteID,
-			OrganizationID:   tenantID,
-			Title:            item.Title,
-			Description:      item.Description,
-			Quantity:         item.Quantity,
-			QuantityNumeric:  item.QuantityNumeric,
-			UnitPriceCents:   item.UnitPriceCents,
-			TaxRateBps:       item.TaxRateBps,
-			IsOptional:       item.IsOptional,
-			IsSelected:       item.IsSelected,
-			SortOrder:        item.SortOrder,
-			CatalogProductID: item.CatalogProductID,
-			CreatedAt:        createdAt,
-		}
-	}
-	return cloned
-}
-
-func cloneAttachmentRequests(attachments []repository.QuoteAttachment) []transport.QuoteAttachmentRequest {
-	result := make([]transport.QuoteAttachmentRequest, len(attachments))
-	for i, attachment := range attachments {
-		result[i] = transport.QuoteAttachmentRequest{
-			Filename:         attachment.Filename,
-			FileKey:          attachment.FileKey,
-			Source:           attachment.Source,
-			CatalogProductID: attachment.CatalogProductID,
-			Enabled:          attachment.Enabled,
-			SortOrder:        attachment.SortOrder,
-		}
-	}
-	return result
-}
-
-func cloneURLRequests(urls []repository.QuoteURL) []transport.QuoteURLRequest {
-	result := make([]transport.QuoteURLRequest, len(urls))
-	for i, quoteURL := range urls {
-		result[i] = transport.QuoteURLRequest{
-			Label:            quoteURL.Label,
-			Href:             quoteURL.Href,
-			CatalogProductID: quoteURL.CatalogProductID,
-		}
-	}
-	return result
-}
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.ListQuotesRequest) (*transport.QuoteListResponse, error) {
-	params := repository.ListParams{OrganizationID: tenantID, Status: nilIfEmpty(req.Status), Search: req.Search, SortBy: req.SortBy, SortOrder: req.SortOrder, Page: max(req.Page, 1), PageSize: clampPageSize(req.PageSize)}
-	createdFrom, createdTo, err := parseDateRange(req.CreatedAtFrom, req.CreatedAtTo, "createdAtFrom", "createdAtTo")
+	params, err := s.buildListParams(tenantID, req)
 	if err != nil {
 		return nil, err
-	}
-	validFrom, validTo, err := parseDateRange(req.ValidUntilFrom, req.ValidUntilTo, "validUntilFrom", "validUntilTo")
-	if err != nil {
-		return nil, err
-	}
-	totalFrom, totalTo, err := parseInt64Range(req.TotalFrom, req.TotalTo, "totalFrom", "totalTo")
-	if err != nil {
-		return nil, err
-	}
-	params.CreatedAtFrom = createdFrom
-	params.CreatedAtTo = createdTo
-	params.ValidUntilFrom = validFrom
-	params.ValidUntilTo = validTo
-	params.TotalFrom = totalFrom
-	params.TotalTo = totalTo
-	if req.LeadID != "" {
-		parsed, parseErr := uuid.Parse(req.LeadID)
-		if parseErr != nil {
-			return nil, apperr.BadRequest("invalid leadId format")
-		}
-		params.LeadID = &parsed
 	}
 
 	result, err := s.repo.List(ctx, params)
@@ -838,14 +528,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 		quoteIDs = append(quoteIDs, q.ID)
 	}
 
-	itemsByQuoteID, err := s.repo.GetItemsByQuoteIDs(ctx, tenantID, quoteIDs)
+	itemsByQuoteID, attachmentsByQuoteID, urlsByQuoteID, err := s.loadQuoteListRelatedData(ctx, tenantID, quoteIDs)
 	if err != nil {
 		return nil, err
 	}
 
 	items := make([]transport.QuoteResponse, len(result.Items))
 	for i, q := range result.Items {
-		mapped, mapErr := s.buildResponse(ctx, &q, itemsByQuoteID[q.ID])
+		attachments := toAttachmentResponses(attachmentsByQuoteID[q.ID])
+		urls := toURLResponses(urlsByQuoteID[q.ID])
+		mapped, mapErr := s.assembleQuoteResponse(&q, itemsByQuoteID[q.ID], nil, attachments, urls, nil, nil)
 		if mapErr != nil {
 			return nil, mapErr
 		}
@@ -855,6 +547,80 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 	return &transport.QuoteListResponse{Items: items, Total: result.Total, Page: result.Page, PageSize: result.PageSize, TotalPages: result.TotalPages}, nil
 }
 
+func (s *Service) buildListParams(tenantID uuid.UUID, req transport.ListQuotesRequest) (repository.ListParams, error) {
+	params := repository.ListParams{
+		OrganizationID: tenantID,
+		Status:         nilIfEmpty(req.Status),
+		Search:         req.Search,
+		SortBy:         req.SortBy,
+		SortOrder:      req.SortOrder,
+		Page:           max(req.Page, 1),
+		PageSize:       clampPageSize(req.PageSize),
+	}
+
+	createdFrom, createdTo, err := parseDateRange(req.CreatedAtFrom, req.CreatedAtTo, "createdAtFrom", "createdAtTo")
+	if err != nil {
+		return repository.ListParams{}, err
+	}
+	validFrom, validTo, err := parseDateRange(req.ValidUntilFrom, req.ValidUntilTo, "validUntilFrom", "validUntilTo")
+	if err != nil {
+		return repository.ListParams{}, err
+	}
+	totalFrom, totalTo, err := parseInt64Range(req.TotalFrom, req.TotalTo, "totalFrom", "totalTo")
+	if err != nil {
+		return repository.ListParams{}, err
+	}
+
+	params.CreatedAtFrom = createdFrom
+	params.CreatedAtTo = createdTo
+	params.ValidUntilFrom = validFrom
+	params.ValidUntilTo = validTo
+	params.TotalFrom = totalFrom
+	params.TotalTo = totalTo
+
+	if req.LeadID != "" {
+		parsed, err := uuid.Parse(req.LeadID)
+		if err != nil {
+			return repository.ListParams{}, apperr.BadRequest("invalid leadId format")
+		}
+		params.LeadID = &parsed
+	}
+
+	return params, nil
+}
+
+func (s *Service) loadQuoteListRelatedData(ctx context.Context, tenantID uuid.UUID, quoteIDs []uuid.UUID) (map[uuid.UUID][]repository.QuoteItem, map[uuid.UUID][]repository.QuoteAttachment, map[uuid.UUID][]repository.QuoteURL, error) {
+	itemsByQuoteID, err := s.repo.GetItemsByQuoteIDs(ctx, tenantID, quoteIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	attachmentsByQuoteID, err := s.repo.GetAttachmentsByQuoteIDs(ctx, tenantID, quoteIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	urlsByQuoteID, err := s.repo.GetURLsByQuoteIDs(ctx, tenantID, quoteIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return itemsByQuoteID, attachmentsByQuoteID, urlsByQuoteID, nil
+}
+
+func toAttachmentResponses(attachments []repository.QuoteAttachment) []transport.QuoteAttachmentResponse {
+	result := make([]transport.QuoteAttachmentResponse, len(attachments))
+	for i, a := range attachments {
+		result[i] = toAttachmentResponse(a)
+	}
+	return result
+}
+
+func toURLResponses(urls []repository.QuoteURL) []transport.QuoteURLResponse {
+	result := make([]transport.QuoteURLResponse, len(urls))
+	for i, u := range urls {
+		result[i] = toURLResponse(u)
+	}
+	return result
+}
+
 func (s *Service) ListPendingApprovals(ctx context.Context, tenantID uuid.UUID, req transport.ListPendingApprovalsRequest) (*transport.PendingApprovalsResponse, error) {
 	result, err := s.repo.ListPendingApprovals(ctx, tenantID, max(req.Page, 1), clampPageSize(req.PageSize))
 	if err != nil {
@@ -862,7 +628,7 @@ func (s *Service) ListPendingApprovals(ctx context.Context, tenantID uuid.UUID, 
 	}
 	items := make([]transport.PendingApprovalItem, len(result.Items))
 	for i, row := range result.Items {
-		consumerName := strings.TrimSpace(strings.TrimSpace(ptrToString(row.ConsumerFirstName)) + " " + strings.TrimSpace(ptrToString(row.ConsumerLastName)))
+		consumerName := strings.TrimSpace(ptrToString(row.ConsumerFirstName) + " " + ptrToString(row.ConsumerLastName))
 		if consumerName == "" {
 			consumerName = row.QuoteNumber
 		}
@@ -964,471 +730,40 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	return nil
 }
 
-func (s *Service) TransferToOrganization(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, destinationTenantID uuid.UUID, actorID uuid.UUID) (*transport.TransferQuoteResponse, error) {
-	if tenantID == destinationTenantID {
-		return nil, apperr.Validation("destination organization must differ from source organization")
-	}
-	if s.leadCreator == nil || s.leadRepo == nil {
-		return nil, apperr.Internal("quote transfer dependencies are not configured")
-	}
 
-	context, err := s.loadQuoteTransferContext(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	createdLead, err := s.createTransferredQuoteLead(ctx, context, destinationTenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	createdQuote, err := s.Create(ctx, destinationTenantID, actorID, buildTransferredQuoteRequest(context, createdLead))
-	if err != nil {
-		return nil, err
-	}
-	s.recordQuoteTransferAudit(ctx, quoteTransferAuditParams{
-		quoteID:               context.sourceQuote.ID,
-		leadID:                context.sourceQuote.LeadID,
-		serviceID:             nil,
-		tenantID:              tenantID,
-		relatedOrganizationID: destinationTenantID,
-		actorID:               actorID,
-		action:                "transferred_out",
-		message:               "Quote transferred to another organization",
-	})
-	s.recordQuoteTransferAudit(ctx, quoteTransferAuditParams{
-		quoteID:               createdQuote.ID,
-		leadID:                createdQuote.LeadID,
-		serviceID:             createdQuote.LeadServiceID,
-		tenantID:              destinationTenantID,
-		relatedOrganizationID: tenantID,
-		actorID:               actorID,
-		action:                "transferred_in",
-		message:               "Quote received from another organization",
-	})
-
-	if err := s.Delete(ctx, id, tenantID, actorID); err != nil {
-		return nil, err
-	}
-
-	cleanupPlan := planQuoteTransferSourceCleanup(context.sourceLead.ID, context.sourceService.ID, context.sourceServices)
-	if cleanupPlan.DeleteLead {
-		if err := s.leadRepo.Delete(ctx, context.sourceLead.ID, tenantID); err != nil {
-			return nil, err
-		}
-	} else if cleanupPlan.ServiceID != nil {
-		if err := s.leadRepo.DeleteLeadService(ctx, *cleanupPlan.ServiceID, tenantID); err != nil {
-			return nil, err
-		}
-	}
-
-	return &transport.TransferQuoteResponse{
-		Quote:                     *createdQuote,
-		DestinationLeadID:         createdLead.ID,
-		DestinationOrganizationID: destinationTenantID,
-		SourceLeadDeleted:         cleanupPlan.DeleteLead,
-	}, nil
-}
-
-type quoteTransferCleanupPlan struct {
-	DeleteLead bool
-	ServiceID  *uuid.UUID
-}
-
-func planQuoteTransferSourceCleanup(_ uuid.UUID, sourceServiceID uuid.UUID, services []leadrepo.LeadService) quoteTransferCleanupPlan {
-	if len(services) <= 1 {
-		return quoteTransferCleanupPlan{DeleteLead: true}
-	}
-	serviceID := sourceServiceID
-	return quoteTransferCleanupPlan{DeleteLead: false, ServiceID: &serviceID}
-}
-
-type quoteTransferAuditParams struct {
-	quoteID               uuid.UUID
-	leadID                uuid.UUID
-	serviceID             *uuid.UUID
-	tenantID              uuid.UUID
-	relatedOrganizationID uuid.UUID
-	actorID               uuid.UUID
-	action                string
-	message               string
-}
-
-func (s *Service) recordQuoteTransferAudit(ctx context.Context, params quoteTransferAuditParams) {
-	metadata, _ := json.Marshal(map[string]any{
-		"action":                params.action,
-		"relatedOrganizationId": params.relatedOrganizationID,
-	})
-	_ = s.repo.CreateActivity(ctx, &repository.QuoteActivity{
-		ID:             uuid.New(),
-		QuoteID:        params.quoteID,
-		OrganizationID: params.tenantID,
-		EventType:      "transfer",
-		Message:        params.message,
-		Metadata:       metadata,
-		CreatedAt:      time.Now(),
-	})
-	s.emitTimelineEvent(ctx, TimelineEventParams{
-		LeadID:         params.leadID,
-		ServiceID:      params.serviceID,
-		OrganizationID: params.tenantID,
-		ActorType:      "User",
-		ActorName:      params.actorID.String(),
-		EventType:      "quote_transfer",
-		Title:          params.message,
-		Summary:        nil,
-		Metadata: map[string]any{
-			"quoteId":               params.quoteID,
-			"action":                params.action,
-			"relatedOrganizationId": params.relatedOrganizationID,
-		},
-		Visibility: "internal",
-	})
-}
-
-type quoteTransferContext struct {
-	sourceQuote    *repository.Quote
-	sourceLead     leadrepo.Lead
-	sourceServices []leadrepo.LeadService
-	sourceService  *leadrepo.LeadService
-	items          []repository.QuoteItem
-	attachments    []repository.QuoteAttachment
-	urls           []repository.QuoteURL
-}
-
-func (s *Service) loadQuoteTransferContext(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (quoteTransferContext, error) {
-	sourceQuote, err := s.repo.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return quoteTransferContext{}, err
-	}
-	items, attachments, urls, err := s.loadQuoteCloneData(ctx, id, tenantID)
-	if err != nil {
-		return quoteTransferContext{}, err
-	}
-	sourceLead, sourceServices, err := s.leadRepo.GetByIDWithServices(ctx, sourceQuote.LeadID, tenantID)
-	if err != nil {
-		return quoteTransferContext{}, err
-	}
-	sourceService := resolveTransferredQuoteService(sourceQuote.LeadServiceID, sourceServices)
-	if sourceService == nil {
-		return quoteTransferContext{}, apperr.Validation("quote has no transferable service context")
-	}
-
-	return quoteTransferContext{
-		sourceQuote:    sourceQuote,
-		sourceLead:     sourceLead,
-		sourceServices: sourceServices,
-		sourceService:  sourceService,
-		items:          items,
-		attachments:    attachments,
-		urls:           urls,
-	}, nil
-}
-
-func (s *Service) createTransferredQuoteLead(ctx context.Context, transfer quoteTransferContext, destinationTenantID uuid.UUID) (leadstransport.LeadResponse, error) {
-	createdLead, err := s.leadCreator.Create(ctx, leadstransport.CreateLeadRequest{
-		FirstName:       firstNonEmptyQuoteString(transfer.sourceQuote.CustomerFirstName, &transfer.sourceLead.ConsumerFirstName),
-		LastName:        firstNonEmptyQuoteString(transfer.sourceQuote.CustomerLastName, &transfer.sourceLead.ConsumerLastName),
-		Phone:           firstNonEmptyQuoteString(transfer.sourceQuote.CustomerPhone, &transfer.sourceLead.ConsumerPhone),
-		Email:           firstNonEmptyQuoteString(transfer.sourceQuote.CustomerEmail, transfer.sourceLead.ConsumerEmail),
-		ConsumerRole:    leadstransport.ConsumerRole(transfer.sourceLead.ConsumerRole),
-		Street:          firstNonEmptyQuoteString(transfer.sourceQuote.CustomerAddressStreet, &transfer.sourceLead.AddressStreet),
-		HouseNumber:     firstNonEmptyQuoteString(transfer.sourceQuote.CustomerAddressHouseNumber, &transfer.sourceLead.AddressHouseNumber),
-		ZipCode:         firstNonEmptyQuoteString(transfer.sourceQuote.CustomerAddressZipCode, &transfer.sourceLead.AddressZipCode),
-		City:            firstNonEmptyQuoteString(transfer.sourceQuote.CustomerAddressCity, &transfer.sourceLead.AddressCity),
-		Latitude:        transfer.sourceLead.Latitude,
-		Longitude:       transfer.sourceLead.Longitude,
-		ServiceType:     leadstransport.ServiceType(transfer.sourceService.ServiceType),
-		ConsumerNote:    ptrToString(transfer.sourceService.ConsumerNote),
-		Source:          firstNonEmptyQuoteString(transfer.sourceService.Source, transfer.sourceLead.Source),
-		WhatsAppOptedIn: quoteBoolPtr(transfer.sourceLead.WhatsAppOptedIn),
-	}, destinationTenantID)
-	if err != nil {
-		return leadstransport.LeadResponse{}, err
-	}
-
-	if createdLead.CurrentService != nil {
-		if _, err := s.leadRepo.UpdateServiceStatusAndPipelineStage(ctx, createdLead.CurrentService.ID, destinationTenantID, transfer.sourceService.Status, transfer.sourceService.PipelineStage); err != nil {
-			return leadstransport.LeadResponse{}, err
-		}
-	}
-
-	return createdLead, nil
-}
-
-func buildTransferredQuoteRequest(transfer quoteTransferContext, createdLead leadstransport.LeadResponse) transport.CreateQuoteRequest {
-	request := transport.CreateQuoteRequest{
-		LeadID:              createdLead.ID,
-		PricingMode:         transfer.sourceQuote.PricingMode,
-		DiscountType:        transfer.sourceQuote.DiscountType,
-		DiscountValue:       transfer.sourceQuote.DiscountValue,
-		ValidUntil:          transport.DateFromTime(transfer.sourceQuote.ValidUntil),
-		Notes:               ptrToString(transfer.sourceQuote.Notes),
-		FinancingDisclaimer: transfer.sourceQuote.FinancingDisclaimer,
-		Items:               make([]transport.QuoteItemRequest, len(transfer.items)),
-		Attachments:         cloneAttachmentRequests(transfer.attachments),
-		URLs:                cloneURLRequests(transfer.urls),
-	}
-	if subsidySnapshot, err := unmarshalQuoteSubsidySnapshot(transfer.sourceQuote.SubsidyData); err == nil {
-		request.ISDESubsidy = subsidySnapshot
-	}
-	if createdLead.CurrentService != nil {
-		request.LeadServiceID = &createdLead.CurrentService.ID
-	}
-	for index, item := range transfer.items {
-		request.Items[index] = transport.QuoteItemRequest{
-			Title:            item.Title,
-			Description:      item.Description,
-			Quantity:         item.Quantity,
-			UnitPriceCents:   item.UnitPriceCents,
-			TaxRateBps:       item.TaxRateBps,
-			IsOptional:       item.IsOptional,
-			IsSelected:       item.IsSelected,
-			CatalogProductID: item.CatalogProductID,
-		}
-	}
-	return request
-}
-
-func resolveTransferredQuoteService(leadServiceID *uuid.UUID, services []leadrepo.LeadService) *leadrepo.LeadService {
-	if leadServiceID != nil {
-		for _, service := range services {
-			if service.ID == *leadServiceID {
-				serviceCopy := service
-				return &serviceCopy
-			}
-		}
-	}
-	for _, service := range services {
-		if service.PipelineStage != "Completed" && service.PipelineStage != "Lost" {
-			serviceCopy := service
-			return &serviceCopy
-		}
-	}
-	if len(services) == 0 {
-		return nil
-	}
-	serviceCopy := services[0]
-	return &serviceCopy
-}
-
-func firstNonEmptyQuoteString(values ...*string) string {
-	for _, value := range values {
-		if value == nil {
-			continue
-		}
-		trimmed := strings.TrimSpace(*value)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func quoteBoolPtr(value bool) *bool {
-	result := value
-	return &result
-}
-
-func generatePublicToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate token: %w", err)
-	}
-	return hex.EncodeToString(b), nil
-}
-
-func tokenExpiresAt(q *repository.Quote, kind repository.TokenKind) *time.Time {
-	if kind == repository.TokenKindPreview {
-		return q.PreviewTokenExpAt
-	}
-	return q.PublicTokenExpAt
-}
-
-func isReadOnlyToken(kind repository.TokenKind) bool { return kind == repository.TokenKindPreview }
-func (s *Service) resolveToken(ctx context.Context, token string) (*repository.Quote, repository.TokenKind, error) {
-	return s.repo.GetByToken(ctx, token)
-}
-
-func validateSendableQuoteStatus(status string) error {
-	if status != string(transport.QuoteStatusDraft) && status != string(transport.QuoteStatusSent) {
-		return apperr.BadRequest("only draft or sent quotes can be sent")
-	}
-	return nil
-}
-
-func (s *Service) ensureQuotePublicToken(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) (string, error) {
-	token := strings.TrimSpace(ptrToString(quote.PublicToken))
-	if token != "" {
-		now := time.Now()
-		if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.After(now) {
-			return token, nil
-		}
-		// Token exists but has expired — refresh its expiration.
-		expiresAt := now.Add(defaultPublicTokenTTL)
-		if quote.ValidUntil != nil && quote.ValidUntil.After(now) {
-			expiresAt = *quote.ValidUntil
-		}
-		if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, token, expiresAt); err != nil {
-			return "", err
-		}
-		quote.PublicTokenExpAt = &expiresAt
-		return token, nil
-	}
-
-	if reusedToken, reusedExpAt, reused, err := s.tryReuseVersionChainPublicToken(ctx, quote, tenantID); err != nil {
-		return "", err
-	} else if reused {
-		quote.PublicToken = &reusedToken
-		quote.PublicTokenExpAt = reusedExpAt
-		return reusedToken, nil
-	}
-
-	generatedToken, err := generatePublicToken()
-	if err != nil {
-		return "", err
-	}
-
-	expiresAt := time.Now().Add(defaultPublicTokenTTL)
-	if quote.ValidUntil != nil && quote.ValidUntil.After(time.Now()) {
-		expiresAt = *quote.ValidUntil
-	}
-	if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, generatedToken, expiresAt); err != nil {
-		return "", err
-	}
-
-	return generatedToken, nil
-}
-
-func (s *Service) tryReuseVersionChainPublicToken(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) (string, *time.Time, bool, error) {
-	versionRootID := resolveQuoteVersionRootID(quote)
-	if versionRootID == uuid.Nil || versionRootID == quote.ID {
-		return "", nil, false, nil
-	}
-	return s.repo.MoveChainPublicToken(ctx, versionRootID, quote.ID, tenantID)
-}
-
-func (s *Service) ensureQuoteStatusSent(ctx context.Context, quoteID, tenantID uuid.UUID, currentStatus string) error {
-	if currentStatus == string(transport.QuoteStatusSent) {
-		return nil
-	}
-	return s.repo.UpdateStatus(ctx, quoteID, tenantID, string(transport.QuoteStatusSent))
-}
-
-func (s *Service) publishQuoteSentEvent(ctx context.Context, quote *repository.Quote, tenantID, agentID uuid.UUID, token string) {
-	if s.eventBus == nil {
-		return
-	}
-
-	evt := events.QuoteSent{
-		BaseEvent:      events.NewBaseEvent(),
-		QuoteID:        quote.ID,
-		OrganizationID: tenantID,
-		LeadID:         quote.LeadID,
-		LeadServiceID:  quote.LeadServiceID,
-		ISDESubsidy:    quoteSubsidyEventPayload(quote.SubsidyData),
-		PublicToken:    token,
-		QuoteNumber:    quote.QuoteNumber,
-		AgentID:        agentID,
-	}
-
-	if s.contacts != nil {
-		if contactData, contactErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, tenantID); contactErr == nil {
-			evt.ConsumerEmail = contactData.ConsumerEmail
-			evt.ConsumerName = contactData.ConsumerName
-			evt.ConsumerPhone = contactData.ConsumerPhone
-			evt.OrganizationName = contactData.OrganizationName
-		}
-	}
-
-	s.eventBus.Publish(ctx, evt)
-}
-
-func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, agentID uuid.UUID) (*transport.QuoteResponse, error) {
-	quote, err := s.repo.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateSendableQuoteStatus(quote.Status); err != nil {
-		return nil, err
-	}
-
-	token, err := s.ensureQuotePublicToken(ctx, quote, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.ensureQuoteStatusSent(ctx, id, tenantID, quote.Status); err != nil {
-		return nil, err
-	}
-	resp, err := s.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	s.publishQuoteSentEvent(ctx, quote, tenantID, agentID, token)
-	s.emitTimelineEvent(ctx, TimelineEventParams{LeadID: quote.LeadID, ServiceID: quote.LeadServiceID, OrganizationID: tenantID, ActorType: "User", ActorName: agentID.String(), EventType: "quote_sent", Title: fmt.Sprintf("Quote %s sent", quote.QuoteNumber), Summary: toPtr(fmt.Sprintf(msgTotalFormat, float64(quote.TotalCents)/100)), Metadata: map[string]any{"quoteId": id, "status": "Sent"}})
-	return resp, nil
-}
-
-func (s *Service) GetPublicQuoteID(ctx context.Context, token string) (uuid.UUID, error) {
-	quote, _, err := s.resolveToken(ctx, token)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return quote.ID, nil
-}
-
-func (s *Service) GetPublicQuoteStorageMeta(ctx context.Context, token string) (*PublicQuoteStorageMeta, error) {
-	quote, _, err := s.resolveToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	pdfFileKey := ""
-	if quote.PDFFileKey != nil {
-		pdfFileKey = *quote.PDFFileKey
-	}
-	return &PublicQuoteStorageMeta{QuoteID: quote.ID, OrgID: quote.OrganizationID, PDFFileKey: pdfFileKey}, nil
-}
-
-// InvalidateQuotePDF clears the stored PDF file key so the next download triggers regeneration.
-func (s *Service) InvalidateQuotePDF(ctx context.Context, quoteID uuid.UUID) error {
-	return s.repo.SetPDFFileKey(ctx, quoteID, "")
-}
-
-func (s *Service) GetPreviewLink(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (*transport.QuotePreviewLinkResponse, error) {
-	quote, err := s.repo.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	if quote.PreviewToken != nil && quote.PreviewTokenExpAt != nil && quote.PreviewTokenExpAt.After(now) {
-		return &transport.QuotePreviewLinkResponse{Token: *quote.PreviewToken, ExpiresAt: quote.PreviewTokenExpAt}, nil
-	}
-	token, err := generatePublicToken()
-	if err != nil {
-		return nil, err
-	}
-	expiresAt := now.Add(defaultPublicTokenTTL)
-	if quote.ValidUntil != nil && quote.ValidUntil.After(now) {
-		expiresAt = *quote.ValidUntil
-	}
-	if err := s.repo.SetPreviewToken(ctx, id, tenantID, token, expiresAt); err != nil {
-		return nil, err
-	}
-	return &transport.QuotePreviewLinkResponse{Token: token, ExpiresAt: &expiresAt}, nil
-}
-
+// buildResponse loads all related data for a single quote and assembles the transport response.
 func (s *Service) buildResponse(ctx context.Context, q *repository.Quote, items []repository.QuoteItem, annotations ...[]repository.QuoteAnnotation) (*transport.QuoteResponse, error) {
+	attachments, err := s.loadAttachmentResponses(ctx, q.ID, q.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	urls, err := s.loadURLResponses(ctx, q.ID, q.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	duplicatedFromQuoteNumber, previousVersionQuoteNumber, err := s.loadQuoteLineageNumbers(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+
+	var annotationSlice []repository.QuoteAnnotation
+	if len(annotations) > 0 {
+		annotationSlice = annotations[0]
+	}
+
+	return s.assembleQuoteResponse(q, items, annotationSlice, attachments, urls, duplicatedFromQuoteNumber, previousVersionQuoteNumber)
+}
+
+// assembleQuoteResponse maps fully loaded domain data to a transport response without performing any database calls.
+func (s *Service) assembleQuoteResponse(q *repository.Quote, items []repository.QuoteItem, annotations []repository.QuoteAnnotation, attachments []transport.QuoteAttachmentResponse, urls []transport.QuoteURLResponse, duplicatedFromQuoteNumber, previousVersionQuoteNumber *string) (*transport.QuoteResponse, error) {
 	pricingMode := q.PricingMode
 	if pricingMode == "" {
 		pricingMode = "exclusive"
 	}
 
 	annotationsByItem := make(map[uuid.UUID][]transport.AnnotationResponse)
-	if len(annotations) > 0 {
-		for _, a := range annotations[0] {
-			annotationsByItem[a.QuoteItemID] = append(annotationsByItem[a.QuoteItemID], transport.AnnotationResponse{ID: a.ID, ItemID: a.QuoteItemID, AuthorType: a.AuthorType, AuthorID: a.AuthorID, Text: a.Text, IsResolved: a.IsResolved, CreatedAt: a.CreatedAt})
-		}
+	for _, a := range annotations {
+		annotationsByItem[a.QuoteItemID] = append(annotationsByItem[a.QuoteItemID], transport.AnnotationResponse{ID: a.ID, ItemID: a.QuoteItemID, AuthorType: a.AuthorType, AuthorID: a.AuthorID, Text: a.Text, IsResolved: a.IsResolved, CreatedAt: a.CreatedAt})
 	}
 
 	respItems := make([]transport.QuoteItemResponse, len(items))
@@ -1448,24 +783,57 @@ func (s *Service) buildResponse(ctx context.Context, q *repository.Quote, items 
 		}
 	}
 
-	attachments, err := s.loadAttachmentResponses(ctx, q.ID, q.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	urls, err := s.loadURLResponses(ctx, q.ID, q.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-	duplicatedFromQuoteNumber, previousVersionQuoteNumber, err := s.loadQuoteLineageNumbers(ctx, q)
-	if err != nil {
-		return nil, err
-	}
 	isdeSubsidy, err := unmarshalQuoteSubsidySnapshot(q.SubsidyData)
 	if err != nil {
 		return nil, err
 	}
 
-	return &transport.QuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, DuplicatedFromQuoteID: q.DuplicatedFromQuoteID, DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber, PreviousVersionQuoteID: q.PreviousVersionQuoteID, PreviousVersionQuoteNumber: previousVersionQuoteNumber, VersionRootQuoteID: q.VersionRootQuoteID, VersionNumber: q.VersionNumber, LeadID: q.LeadID, LeadServiceID: q.LeadServiceID, CreatedByID: q.CreatedByID, CreatedByFirstName: q.CreatedByFirstName, CreatedByLastName: q.CreatedByLastName, CreatedByEmail: q.CreatedByEmail, CustomerFirstName: q.CustomerFirstName, CustomerLastName: q.CustomerLastName, CustomerPhone: q.CustomerPhone, CustomerEmail: q.CustomerEmail, CustomerAddressStreet: q.CustomerAddressStreet, CustomerAddressHouseNumber: q.CustomerAddressHouseNumber, CustomerAddressZipCode: q.CustomerAddressZipCode, CustomerAddressCity: q.CustomerAddressCity, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: q.SubtotalCents, DiscountAmountCents: q.DiscountAmountCents, TaxTotalCents: q.TaxTotalCents, TotalCents: q.TotalCents, ValidUntil: q.ValidUntil, Notes: q.Notes, ISDESubsidy: isdeSubsidy, Items: respItems, Attachments: attachments, URLs: urls, ViewedAt: q.ViewedAt, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, PDFFileKey: q.PDFFileKey, FinancingDisclaimer: q.FinancingDisclaimer, PagePerItem: q.PagePerItem, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}, nil
+	return &transport.QuoteResponse{
+		ID:                        q.ID,
+		QuoteNumber:               q.QuoteNumber,
+		DuplicatedFromQuoteID:     q.DuplicatedFromQuoteID,
+		DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber,
+		PreviousVersionQuoteID:    q.PreviousVersionQuoteID,
+		PreviousVersionQuoteNumber: previousVersionQuoteNumber,
+		VersionRootQuoteID:        q.VersionRootQuoteID,
+		VersionNumber:             q.VersionNumber,
+		LeadID:                    q.LeadID,
+		LeadServiceID:             q.LeadServiceID,
+		CreatedByID:               q.CreatedByID,
+		CreatedByFirstName:        q.CreatedByFirstName,
+		CreatedByLastName:         q.CreatedByLastName,
+		CreatedByEmail:            q.CreatedByEmail,
+		CustomerFirstName:         q.CustomerFirstName,
+		CustomerLastName:          q.CustomerLastName,
+		CustomerPhone:             q.CustomerPhone,
+		CustomerEmail:             q.CustomerEmail,
+		CustomerAddressStreet:     q.CustomerAddressStreet,
+		CustomerAddressHouseNumber: q.CustomerAddressHouseNumber,
+		CustomerAddressZipCode:    q.CustomerAddressZipCode,
+		CustomerAddressCity:       q.CustomerAddressCity,
+		Status:                    transport.QuoteStatus(q.Status),
+		PricingMode:               q.PricingMode,
+		DiscountType:              q.DiscountType,
+		DiscountValue:             q.DiscountValue,
+		SubtotalCents:             q.SubtotalCents,
+		DiscountAmountCents:       q.DiscountAmountCents,
+		TaxTotalCents:             q.TaxTotalCents,
+		TotalCents:                q.TotalCents,
+		ValidUntil:                q.ValidUntil,
+		Notes:                     q.Notes,
+		ISDESubsidy:               isdeSubsidy,
+		Items:                     respItems,
+		Attachments:               attachments,
+		URLs:                      urls,
+		ViewedAt:                  q.ViewedAt,
+		AcceptedAt:                q.AcceptedAt,
+		RejectedAt:                q.RejectedAt,
+		PDFFileKey:                q.PDFFileKey,
+		FinancingDisclaimer:       q.FinancingDisclaimer,
+		PagePerItem:               q.PagePerItem,
+		CreatedAt:                 q.CreatedAt,
+		UpdatedAt:                 q.UpdatedAt,
+	}, nil
 }
 
 func (s *Service) loadQuoteLineageNumbers(ctx context.Context, q *repository.Quote) (*string, *string, error) {

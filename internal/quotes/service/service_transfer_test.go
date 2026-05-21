@@ -9,9 +9,8 @@ import (
 )
 
 func TestPlanQuoteTransferSourceCleanupDeletesLeadWhenOnlyService(t *testing.T) {
-	leadID := uuid.New()
 	serviceID := uuid.New()
-	plan := planQuoteTransferSourceCleanup(leadID, serviceID, []leadrepo.LeadService{{ID: serviceID}})
+	plan := planQuoteTransferSourceCleanup(serviceID, []leadrepo.LeadService{{ID: serviceID}})
 	if !plan.DeleteLead {
 		t.Fatal("expected single-service transfer to delete source lead")
 	}
@@ -21,10 +20,9 @@ func TestPlanQuoteTransferSourceCleanupDeletesLeadWhenOnlyService(t *testing.T) 
 }
 
 func TestPlanQuoteTransferSourceCleanupDeletesOnlyTransferredServiceForMultiServiceLead(t *testing.T) {
-	leadID := uuid.New()
 	serviceID := uuid.New()
 	otherServiceID := uuid.New()
-	plan := planQuoteTransferSourceCleanup(leadID, serviceID, []leadrepo.LeadService{{ID: serviceID}, {ID: otherServiceID}})
+	plan := planQuoteTransferSourceCleanup(serviceID, []leadrepo.LeadService{{ID: serviceID}, {ID: otherServiceID}})
 	if plan.DeleteLead {
 		t.Fatal("expected multi-service transfer to preserve source lead")
 	}
