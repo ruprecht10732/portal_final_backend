@@ -1260,6 +1260,19 @@ func validateSendableQuoteStatus(status string) error {
 func (s *Service) ensureQuotePublicToken(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) (string, error) {
 	token := strings.TrimSpace(ptrToString(quote.PublicToken))
 	if token != "" {
+		now := time.Now()
+		if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.After(now) {
+			return token, nil
+		}
+		// Token exists but has expired — refresh its expiration.
+		expiresAt := now.Add(defaultPublicTokenTTL)
+		if quote.ValidUntil != nil && quote.ValidUntil.After(now) {
+			expiresAt = *quote.ValidUntil
+		}
+		if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, token, expiresAt); err != nil {
+			return "", err
+		}
+		quote.PublicTokenExpAt = &expiresAt
 		return token, nil
 	}
 
