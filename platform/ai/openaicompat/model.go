@@ -17,12 +17,11 @@ import (
 )
 
 const (
-	// httpRequestTimeout is the per-request timeout for LLM API calls.
-	// Reasoning models (deepseek-reasoner, kimi-k2.5) typically complete
-	// gatekeeper calls in <30s, but during peak times or complex reasoning
-	// they can exceed 50s. We set a generous ceiling to avoid failing
-	// long-running requests when the upstream API is slow.
-	httpRequestTimeout = 300 * time.Second
+	// defaultHTTPRequestTimeout is the fallback per-request timeout for LLM API calls.
+	// The longest agent task timeout is 10 minutes (estimator), so the HTTP client
+	// must allow at least that much time for a single request to avoid the HTTP
+	// layer timing out before the task scheduler does.
+	defaultHTTPRequestTimeout = 600 * time.Second
 )
 
 // Config for an OpenAI-compatible LLM provider (Kimi, DeepSeek, etc.).
@@ -30,9 +29,10 @@ type Config struct {
 	APIKey          string
 	BaseURL         string
 	Model           string
-	Provider        string // "kimi" or "deepseek" — controls thinking-mode payload
-	DisableThinking bool   // For Kimi: toggles thinking payload. For DeepSeek: ignored (reasoning via model name).
-	SupportsVision  bool   // Whether this provider accepts image_url content parts.
+	Provider        string        // "kimi" or "deepseek" — controls thinking-mode payload
+	DisableThinking bool          // For Kimi: toggles thinking payload. For DeepSeek: ignored (reasoning via model name).
+	SupportsVision  bool          // Whether this provider accepts image_url content parts.
+	Timeout         time.Duration // Per-request HTTP timeout. Zero uses defaultHTTPRequestTimeout.
 }
 
 // Model adapts an OpenAI-compatible provider to the ADK model.LLM interface.
@@ -51,9 +51,13 @@ func NewModel(cfg Config) *Model {
 	if cfg.Provider == "" {
 		cfg.Provider = "kimi"
 	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultHTTPRequestTimeout
+	}
 	return &Model{
 		config: cfg,
-		client: &http.Client{Timeout: httpRequestTimeout},
+		client: &http.Client{Timeout: timeout},
 	}
 }
 
