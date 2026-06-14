@@ -435,8 +435,12 @@ func (s *Service) GetWhatsAppQR(ctx context.Context, organizationID uuid.UUID) (
 
 	qrBytes, err := s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
 	if err != nil {
-		if isSessionDeleted(err) {
-			return nil, sessionDeletedError(err)
+		if requiresReRegistration(err) {
+			// The upstream device/session is unusable; clear the local registration
+			// so the user can re-register without a manual disconnect step. Ignore
+			// disconnect errors because the upstream device is already unusable.
+			_ = s.DisconnectWhatsAppDevice(ctx, organizationID)
+			return nil, reRegisterError(err)
 		}
 		return nil, apperr.BadRequest("Unable to generate WhatsApp QR code. If the problem persists, disconnect and register the device again.").WithDetails(map[string]string{"reason": err.Error()})
 	}
@@ -479,10 +483,14 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 
 	upstreamStatus, err := s.whatsapp.GetDeviceStatus(ctx, deviceID)
 	if err != nil {
-		if apperr.Is(err, apperr.KindNotFound) {
+		if apperr.Is(err, apperr.KindNotFound) || isSessionDeleted(err) {
+			message := "Device configuration lost upstream. Please register again."
+			if isSessionDeleted(err) {
+				message = "WhatsApp session was deleted. Please register again."
+			}
 			return WhatsAppStatus{
 				State:       "ERROR",
-				Message:     "Device configuration lost upstream. Please register again.",
+				Message:     message,
 				CanSend:     false,
 				NeedsReauth: true,
 				Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
@@ -568,8 +576,24 @@ func isSessionDeleted(err error) bool {
 		(strings.Contains(msg, "is not logged in") && strings.Contains(msg, "session"))
 }
 
-func sessionDeletedError(err error) *apperr.Error {
-	return apperr.New(apperr.KindGone, "WhatsApp session was deleted. Please register the device again.").WithDetails(map[string]string{"reason": err.Error()})
+// requiresReRegistration reports whether an upstream WhatsApp error indicates the
+// local device record is no longer usable and should be cleared so the user can
+// register again. It covers the explicit "session deleted" case and the QR-code
+// failure symptom the GoWA provider returns when the device state is broken.
+func requiresReRegistration(err error) bool {
+	if isSessionDeleted(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "qr channel closed without receiving image")
+}
+
+func reRegisterError(err error) *apperr.Error {
+	message := "WhatsApp device needs to be registered again."
+	if isSessionDeleted(err) {
+		message = "WhatsApp session was deleted. Please register the device again."
+	}
+	return apperr.New(apperr.KindGone, message).WithDetails(map[string]string{"reason": err.Error()})
 }
 
 func normalizeWhatsAppPresence(value string) string {
@@ -604,8 +628,12 @@ func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID
 	}
 
 	if err := s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID); err != nil {
-		if isSessionDeleted(err) {
-			return sessionDeletedError(err)
+		if requiresReRegistration(err) {
+			// The upstream device/session is unusable; clear the local registration
+			// so the user can re-register without a manual disconnect step. Ignore
+			// disconnect errors because the upstream device is already unusable.
+			_ = s.DisconnectWhatsAppDevice(ctx, organizationID)
+			return reRegisterError(err)
 		}
 		return err
 	}
