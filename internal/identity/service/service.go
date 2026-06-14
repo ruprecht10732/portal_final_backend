@@ -433,16 +433,28 @@ func (s *Service) GetWhatsAppQR(ctx context.Context, organizationID uuid.UUID) (
 		return nil, apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
-	qrBytes, err := s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
+	deviceID := *settings.WhatsAppDeviceID
+	qrBytes, err := s.whatsapp.GetLoginQR(ctx, deviceID)
 	if err != nil {
+		if isDeviceNotFound(err) {
+			// The device ID exists locally but GoWA lost it. Recreate it upstream
+			// and retry once so the user gets a QR code without extra clicks.
+			if _, createErr := s.RegisterWhatsAppDevice(ctx, organizationID); createErr != nil {
+				return nil, apperr.Internal("failed to recreate WhatsApp device: " + createErr.Error())
+			}
+			qrBytes, retryErr := s.whatsapp.GetLoginQR(ctx, deviceID)
+			if retryErr == nil {
+				return qrBytes, nil
+			}
+			return nil, qrError(retryErr)
+		}
 		if requiresReRegistration(err) {
 			// The upstream device/session is unusable; clear the local registration
 			// so the user can re-register without a manual disconnect step. Ignore
 			// disconnect errors because the upstream device is already unusable.
 			_ = s.DisconnectWhatsAppDevice(ctx, organizationID)
-			return nil, reRegisterError(err)
 		}
-		return nil, apperr.BadRequest("Unable to generate WhatsApp QR code. If the problem persists, disconnect and register the device again.").WithDetails(map[string]string{"reason": err.Error()})
+		return nil, qrError(err)
 	}
 	return qrBytes, nil
 }
@@ -576,24 +588,76 @@ func isSessionDeleted(err error) bool {
 		(strings.Contains(msg, "is not logged in") && strings.Contains(msg, "session"))
 }
 
+// isDeviceNotFound reports whether GoWA says the device itself does not exist.
+func isDeviceNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apperr.Is(err, apperr.KindNotFound) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "device not found") || strings.Contains(msg, "device_not_found")
+}
+
+// isAlreadyLoggedIn reports whether GoWA says the device is already paired.
+func isAlreadyLoggedIn(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already logged in")
+}
+
+// isSessionRestoring reports whether GoWA has a saved session that is still
+// connecting. In that state the user should wait and retry, not re-register.
+func isSessionRestoring(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "session have been saved") || strings.Contains(msg, "wait to connect")
+}
+
 // requiresReRegistration reports whether an upstream WhatsApp error indicates the
 // local device record is no longer usable and should be cleared so the user can
-// register again. It covers the explicit "session deleted" case and the QR-code
-// failure symptom the GoWA provider returns when the device state is broken.
+// register again. It covers "session deleted", the device not existing upstream,
+// and the QR-code failure symptom the GoWA provider returns when the device
+// state is broken.
 func requiresReRegistration(err error) bool {
-	if isSessionDeleted(err) {
+	if isSessionDeleted(err) || isDeviceNotFound(err) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "qr channel closed without receiving image")
 }
 
-func reRegisterError(err error) *apperr.Error {
-	message := "WhatsApp device needs to be registered again."
-	if isSessionDeleted(err) {
-		message = "WhatsApp session was deleted. Please register the device again."
+func reRegisterMessage(err error) string {
+	switch {
+	case isDeviceNotFound(err):
+		return "WhatsApp device was not found. Please register the device again."
+	case isSessionDeleted(err):
+		return "WhatsApp session was deleted. Please register the device again."
+	default:
+		return "WhatsApp device needs to be registered again."
 	}
-	return apperr.New(apperr.KindGone, message).WithDetails(map[string]string{"reason": err.Error()})
+}
+
+func qrError(err error) *apperr.Error {
+	switch {
+	case isAlreadyLoggedIn(err):
+		return apperr.New(apperr.KindConflict, "WhatsApp is already connected.").WithDetails(map[string]string{"reason": err.Error()})
+	case isSessionRestoring(err):
+		return apperr.BadRequest("WhatsApp session is being restored. Please try again in a few seconds.").WithDetails(map[string]string{"reason": err.Error()})
+	case requiresReRegistration(err):
+		return apperr.New(apperr.KindGone, reRegisterMessage(err)).WithDetails(map[string]string{"reason": err.Error()})
+	default:
+		return apperr.BadRequest("Unable to generate WhatsApp QR code. If the problem persists, disconnect and register the device again.").WithDetails(map[string]string{"reason": err.Error()})
+	}
+}
+
+func reRegisterError(err error) *apperr.Error {
+	return apperr.New(apperr.KindGone, reRegisterMessage(err)).WithDetails(map[string]string{"reason": err.Error()})
 }
 
 func normalizeWhatsAppPresence(value string) string {
