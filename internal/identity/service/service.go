@@ -433,7 +433,14 @@ func (s *Service) GetWhatsAppQR(ctx context.Context, organizationID uuid.UUID) (
 		return nil, apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
-	return s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
+	qrBytes, err := s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
+	if err != nil {
+		if isSessionDeleted(err) {
+			return nil, sessionDeletedError(err)
+		}
+		return nil, apperr.BadRequest("Unable to generate WhatsApp QR code. If the problem persists, disconnect and register the device again.").WithDetails(map[string]string{"reason": err.Error()})
+	}
+	return qrBytes, nil
 }
 
 func (s *Service) DisconnectWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) error {
@@ -549,6 +556,22 @@ func (s *Service) refreshWhatsAppAccountJID(ctx context.Context, organizationID 
 	return resolvedJID, nil
 }
 
+func isSessionDeleted(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, whatsapp.ErrSessionDeleted) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "session deleted") ||
+		(strings.Contains(msg, "is not logged in") && strings.Contains(msg, "session"))
+}
+
+func sessionDeletedError(err error) *apperr.Error {
+	return apperr.New(apperr.KindGone, "WhatsApp session was deleted. Please register the device again.").WithDetails(map[string]string{"reason": err.Error()})
+}
+
 func normalizeWhatsAppPresence(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
 	if trimmed == "unavailable" {
@@ -580,7 +603,13 @@ func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID
 		return apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
-	return s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID)
+	if err := s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID); err != nil {
+		if isSessionDeleted(err) {
+			return sessionDeletedError(err)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) SendWhatsAppTestMessage(ctx context.Context, organizationID uuid.UUID) (string, error) {

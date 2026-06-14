@@ -273,7 +273,10 @@ type DownloadMediaFileResult struct {
 	Data        []byte
 }
 
-var ErrNoDevice = errors.New("no whatsapp device configured")
+var (
+	ErrNoDevice       = errors.New("no whatsapp device configured")
+	ErrSessionDeleted = errors.New("whatsapp session deleted")
+)
 
 const errWhatsAppClientNotInitialized = "whatsapp client not initialized"
 const errProviderDeviceNotFound = "device not found in provider"
@@ -1165,6 +1168,9 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 			if strings.Contains(msgLower, "device") && strings.Contains(msgLower, "not found") {
 				return nil, apperr.NotFound(errProviderDeviceNotFound)
 			}
+			if isSessionDeletedError(body) {
+				return nil, ErrSessionDeleted
+			}
 		}
 		return nil, fmt.Errorf("provider error: %d: %s", resp.StatusCode, body)
 	}
@@ -1252,7 +1258,11 @@ func (c *Client) ReconnectDevice(ctx context.Context, deviceID string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-		return fmt.Errorf("reconnect failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		body := strings.TrimSpace(string(data))
+		if isSessionDeletedError(body) {
+			return ErrSessionDeleted
+		}
+		return fmt.Errorf("reconnect failed (%d): %s", resp.StatusCode, body)
 	}
 
 	return nil
@@ -1470,6 +1480,12 @@ func (c *Client) addHeaders(req *http.Request, deviceID string) {
 func isConnectionError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "client is not connected") || strings.Contains(msg, "context deadline exceeded")
+}
+
+func isSessionDeletedError(body string) bool {
+	msg := strings.ToLower(body)
+	return strings.Contains(msg, "session deleted") ||
+		(strings.Contains(msg, "is not logged in") && strings.Contains(msg, "session"))
 }
 
 func formatAuthHeader(apiKey string) string {
