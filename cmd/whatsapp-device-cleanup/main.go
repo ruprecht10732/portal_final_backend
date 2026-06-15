@@ -34,6 +34,17 @@ type cleanupResult struct {
 	failed      int
 }
 
+// cleanupEnv holds the dependencies and settings that are constant for every
+// device reference processed in a single run.
+type cleanupEnv struct {
+	ctx     context.Context
+	pool    *pgxpool.Pool
+	client  *whatsapp.Client
+	log     *logger.Logger
+	dryRun  bool
+	delay   time.Duration
+}
+
 func main() {
 	var dryRun bool
 	var delayMs int
@@ -90,9 +101,18 @@ func runCleanup(ctx context.Context, pool *pgxpool.Pool, waClient *whatsapp.Clie
 
 	log.Info("evaluating device refs", "count", len(refs))
 
+	env := cleanupEnv{
+		ctx:    ctx,
+		pool:   pool,
+		client: waClient,
+		log:    log,
+		dryRun: dryRun,
+		delay:  delay,
+	}
+
 	for _, ref := range refs {
 		result.processed++
-		processRef(ctx, pool, waClient, log, ref, dryRun, delay, &result)
+		processRef(env, ref, &result)
 	}
 
 	return result
@@ -100,46 +120,46 @@ func runCleanup(ctx context.Context, pool *pgxpool.Pool, waClient *whatsapp.Clie
 
 // processRef checks a single device reference against GoWA and clears it if it
 // is stale. It mutates result to record the outcome.
-func processRef(ctx context.Context, pool *pgxpool.Pool, waClient *whatsapp.Client, log *logger.Logger, ref deviceRef, dryRun bool, delay time.Duration, result *cleanupResult) {
-	defer func() { time.Sleep(delay) }()
+func processRef(env cleanupEnv, ref deviceRef, result *cleanupResult) {
+	defer func() { time.Sleep(env.delay) }()
 
 	if ref.deviceID == "" {
-		log.Debug("skipping empty device id", "scope", ref.scope, "organizationID", ref.organizationID)
+		env.log.Debug("skipping empty device id", "scope", ref.scope, "organizationID", ref.organizationID)
 		result.skipped++
 		return
 	}
 
-	status, checkErr := waClient.GetDeviceStatus(ctx, ref.deviceID)
+	status, checkErr := env.client.GetDeviceStatus(env.ctx, ref.deviceID)
 	if checkErr == nil {
 		state := deviceState(status)
-		log.Info("device is healthy, keeping", "deviceId", ref.deviceID, "scope", ref.scope, "state", state)
+		env.log.Info("device is healthy, keeping", "deviceId", ref.deviceID, "scope", ref.scope, "state", state)
 		result.kept++
 		return
 	}
 
 	if !shouldClear(checkErr) {
-		log.Warn("device status check failed with unexpected error, leaving alone",
+		env.log.Warn("device status check failed with unexpected error, leaving alone",
 			"deviceId", ref.deviceID, "scope", ref.scope, "error", checkErr)
 		result.failed++
 		return
 	}
 
 	reason := classifyError(checkErr)
-	log.Info("device is stale, clearing", "deviceId", ref.deviceID, "scope", ref.scope, "reason", reason)
+	env.log.Info("device is stale, clearing", "deviceId", ref.deviceID, "scope", ref.scope, "reason", reason)
 
-	if dryRun {
+	if env.dryRun {
 		result.cleared++
 		return
 	}
 
 	// Best-effort delete from GoWA first; ignore errors because the device
 	// may already be gone upstream.
-	if delErr := waClient.DeleteDevice(ctx, ref.deviceID); delErr == nil {
+	if delErr := env.client.DeleteDevice(env.ctx, ref.deviceID); delErr == nil {
 		result.gowaDeleted++
 	}
 
-	if clearErr := clearDeviceRef(ctx, pool, ref); clearErr != nil {
-		log.Error("failed to clear device ref from database",
+	if clearErr := clearDeviceRef(env.ctx, env.pool, ref); clearErr != nil {
+		env.log.Error("failed to clear device ref from database",
 			"deviceId", ref.deviceID, "scope", ref.scope, "error", clearErr)
 		result.failed++
 		return
